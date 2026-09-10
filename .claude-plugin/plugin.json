@@ -1,0 +1,6 @@
+{
+  "name": "work-ledger",
+  "version": "1.0.0",
+  "description": "Automatically captures work performed in Claude Code sessions into a local, queryable work ledger organized by client, project, and ticket.",
+  "author": {"name": "Work Ledger"}
+}

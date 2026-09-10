@@ -1,0 +1,9 @@
+.superpowers/
+__pycache__/
+*.pyc
+
+# A global gitignore on some machines excludes any directory named `bin`. These
+# two are part of the repo: the `worklog` entry point, and the stub `claude`
+# executable the Stage B tests put on PATH.
+!bin/
+!tests/fixtures/bin/

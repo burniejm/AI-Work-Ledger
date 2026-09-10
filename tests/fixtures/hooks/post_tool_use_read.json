@@ -1,0 +1,4 @@
+{"session_id":"sess-1","transcript_path":"/tmp/t.jsonl","cwd":"/Users/x/repo","hook_event_name":"PostToolUse",
+ "permission_mode":"default","tool_name":"Read","tool_use_id":"toolu_02READ",
+ "tool_input":{"file_path":"src/main.go"},
+ "tool_response":{"exit_code":0}}

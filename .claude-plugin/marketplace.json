@@ -1,0 +1,7 @@
+{
+  "name": "work-ledger",
+  "owner": {"name": "Work Ledger"},
+  "plugins": [
+    {"name": "work-ledger", "source": "./", "description": "Local work ledger for Claude Code sessions."}
+  ]
+}

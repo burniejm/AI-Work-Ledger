@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Stub `claude` executable for the Stage B tests.
+
+Global Constraints: "No real model calls in any test (Stage B is exercised
+with a stub `claude` executable on `PATH`)." This file is that stub. It
+ignores argv entirely and prints a Claude-CLI-shaped JSON envelope whose
+`result` field carries whatever the test asked for via STUB_CLAUDE_MODE:
+
+  ok         valid Stage B output for the DESIGN 9.2 schema
+  garbage    prose with no JSON object in it at all
+  badschema  JSON whose `confidence` is outside the enum
+  slow       sleeps 5 s (used to prove `spawn` does not block)
+  fail       exits 1 without printing anything
+"""
+import json
+import os
+import sys
+import time
+
+mode = os.environ.get("STUB_CLAUDE_MODE", "ok")
+if mode == "fail":
+    sys.exit(1)
+if mode == "slow":
+    time.sleep(5)
+
+payloads = {
+    "ok": {"schema_version": 1, "activities": [
+        {"kind": "code", "summary": "Fixed the upload retry loop and re-ran the suite",
+         "outcome": "tests passing", "ticket_hint": "AB-76", "client_hint": "Acme",
+         "project_hint": "Replay", "confidence": "high", "evidence_event_ids": [],
+         "remaining": [{"title": "Retest on replay hardware", "detail": None, "state": "open"}],
+         "blockers": [], "decisions": [{"statement": "Keep backoff at 5 attempts",
+                                        "rationale": None}]}]},
+    "badschema": {"schema_version": 1, "activities": [
+        {"kind": "code", "summary": "x", "confidence": "certain", "evidence_event_ids": []}]},
+}
+result = "not json at all" if mode == "garbage" else json.dumps(payloads[mode])
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                  "result": result}))

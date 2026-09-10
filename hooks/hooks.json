@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook session-start", "timeout": 10}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook user-prompt-submit", "async": true, "timeout": 5}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook post-tool-use", "async": true, "timeout": 5}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook stop", "timeout": 10}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook subagent-stop", "async": true, "timeout": 5}]}
+    ],
+    "PreCompact": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook pre-compact", "timeout": 10}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/worklog hook session-end", "timeout": 1}]}
+    ]
+  }
+}

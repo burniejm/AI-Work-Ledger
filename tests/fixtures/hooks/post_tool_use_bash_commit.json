@@ -1,0 +1,4 @@
+{"session_id":"sess-1","transcript_path":"/tmp/t.jsonl","cwd":"/Users/x/repo","hook_event_name":"PostToolUse",
+ "permission_mode":"default","tool_name":"Bash","tool_use_id":"toolu_01ABC",
+ "tool_input":{"command":"git commit -m \"AB-76 fix upload retry\"","description":"Commit the fix"},
+ "tool_response":{"stdout":"[feature/ab-76 a1b2c3d] AB-76 fix upload retry\n 2 files changed","stderr":"","exit_code":0}}
