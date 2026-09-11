@@ -1142,6 +1142,14 @@ prefix-matched rate table (defaults = first-party pricing; cache reads
 Ticket rollups sum sessions whole; client/day rollups count each session
 once (`tokens_for_sessions`).
 
+## Weekly digest & standup (added post-v1.0)
+
+`query/week.py`: `week_report` reshapes `range_report` (Monday..ending)
+into client -> ticket rows with merged minutes and capped summaries;
+`standup_report` composes two `day_report`s (yesterday/today) plus
+`status_report`'s blockers/waiting. Pure rendering; the `--internal`
+gate for AI/cost fields matches timesheets.
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.

@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
         # subcommand built afterwards.)
         # `export` and `timesheet` define their own `--format` (output styles
         # beyond text/json) rather than inheriting the shared one.
-        if name in ("export", "timesheet"):
+        if name in ("export", "timesheet", "week"):
             sp = sub.add_parser(name)
         else:
             sp = sub.add_parser(name, parents=[common])
@@ -1573,3 +1573,64 @@ def _cmd_githooks(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":          # pragma: no cover -- exercised via subprocess
     raise SystemExit(main())
+
+
+def _setup_week(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("scope", nargs="?")
+    sp.add_argument("--ending", default="today",
+                    help="last workday of the week (default today); week starts Monday")
+    sp.add_argument("--format", choices=("text", "md", "json"), default="text")
+    sp.add_argument("--internal", action="store_true",
+                    help="include AI-usage and cost fields")
+
+
+@register("week", setup=_setup_week)
+def _cmd_week(args: argparse.Namespace) -> int:
+    """`worklog week [client]` -- Monday-to-date digest per client/ticket."""
+    from work_ledger.query import week as week_mod
+
+    tz, rollover_hour = _tz_and_rollover()
+    ending = timeutil.parse_day_expr(args.ending, tz, rollover_hour)
+    conn = _report_conn()
+    try:
+        try:
+            report = week_mod.week_report(
+                conn, args.scope, ending=ending, tz=tz, rollover_hour=rollover_hour,
+                internal=args.internal)
+        except Exception as exc:
+            print(f"worklog: {exc}", file=sys.stderr)
+            return 2
+        if args.format == "json":
+            print(json.dumps(report, indent=2))
+        else:
+            print(week_mod.render_week(report, fmt=args.format))
+        return 0
+    finally:
+        conn.close()
+
+
+def _setup_standup(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("scope", nargs="?")
+
+
+@register("standup", setup=_setup_standup)
+def _cmd_standup(args: argparse.Namespace) -> int:
+    """`worklog standup [client]` -- Yesterday / Today / Blockers."""
+    from work_ledger.query import week as week_mod
+
+    tz, rollover_hour = _tz_and_rollover()
+    conn = _report_conn()
+    try:
+        try:
+            report = week_mod.standup_report(
+                conn, args.scope, tz=tz, rollover_hour=rollover_hour)
+        except Exception as exc:
+            print(f"worklog: {exc}", file=sys.stderr)
+            return 2
+        if args.format == "json":
+            print(json.dumps(report, indent=2))
+        else:
+            print(week_mod.render_standup(report))
+        return 0
+    finally:
+        conn.close()

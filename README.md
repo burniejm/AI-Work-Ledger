@@ -61,6 +61,8 @@ for the full flag list.
 | `worklog range <start> <end>` | A report spanning a range of workdays. |
 | `worklog status [scope]` | Recent status for a client, project, or work item (or everything). Ticket scopes include the AI-usage score (below). |
 | `worklog timesheet <client> --from <day> --to <day>` | Client-facing timesheet: one row per workday and ticket with merged minutes. `--format md\|csv\|json\|text`, `--round <minutes>` rounds rows up to billing increments, `--internal` adds AI-usage fields (excluded by default). |
+| `worklog week [client] [--ending <day>]` | Monday-to-date digest per client and ticket with merged minutes; `--format md`, `--internal` for AI/cost fields. |
+| `worklog standup [client]` | Yesterday / Today / Blockers, terse. |
 | `worklog githooks install\|remove\|status [--repo PATH \| --all-mapped]` | Opt-in git-side capture: a marker-tagged `post-commit` hook line that records human commits the moment they happen (see below). |
 | `worklog remaining [scope] [--state STATE]` | Open remaining items, optionally filtered by scope or state. |
 | `worklog blocked [scope]` | Remaining items currently marked blocked. |
@@ -209,6 +211,15 @@ costs:
 A ticket's number sums its sessions whole (same granularity as the
 AI-usage score), so tickets sharing a session overlap; client/day totals
 never double-count.
+
+## Weekly digest & standup
+
+`worklog standup` answers the daily meeting in three terse sections —
+yesterday's work per ticket, today's so far, and open blockers with their
+explanations. `worklog week [client]` rolls Monday-to-date into a per
+client/ticket digest with merged minutes (`--format md` for a paste-ready
+status email); AI-usage and cost fields appear only with `--internal`,
+same rule as timesheets.
 
 ## Known limitations
 
