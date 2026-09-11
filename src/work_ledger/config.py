@@ -67,6 +67,8 @@ DEFAULTS = {
     },
     "git": {"subprocess_timeout_seconds": 2, "max_commits_per_reconcile": 50},
     "reports": {"status_workdays": 7, "stale_after_days": 14},
+    # consumed by query.timespent: floor minutes for an activity with no end bound
+    "time": {"min_activity_minutes": 5},
 }
 
 def _deep_merge(base: dict, override: dict) -> dict:

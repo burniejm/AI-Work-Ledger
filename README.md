@@ -147,6 +147,21 @@ recomputed over. Human-side coding is inferred from commits that show up in
 git history without matching Claude session activity, so the human side is
 an approximation; treat 2-vs-3 boundaries with that in mind.
 
+## Time on ticket
+
+Status and day reports include **session-active minutes** per work item and
+per client, computed at query time from activity evidence bounds — never
+stored, always current. Overlaps merge, so two activities in the same hour
+count once, and a client's daily total pools its tickets' intervals so a
+stretch shared by two tickets is counted once at the client level.
+
+`worklog status AB-76` shows `time: 2h 25m in window` (the same window the
+status report covers); `worklog day` shows per-item and per-client totals.
+An activity with no end bound counts as `time.min_activity_minutes`
+(default 5). This measures evidence-bounded *session* time, not wall-clock
+effort — human coding outside Claude sessions is invisible here, the same
+caveat as the AI-usage score's human side.
+
 ## Known limitations
 
 Work Ledger runs inside Claude Code's hook system, which has real limits —

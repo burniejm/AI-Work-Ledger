@@ -72,6 +72,9 @@ def _render_daily(report: dict) -> str:
                 ai_usage = work_item.get("ai_usage")
                 if ai_usage:
                     lines.append(f"  AI {ai_usage.get('score')}/5 ({ai_usage.get('confidence')})")
+                if work_item.get("minutes"):
+                    from work_ledger.query import timespent as _ts
+                    lines.append(f"  time: {_ts.format_minutes(work_item['minutes'])}")
 
                 for activity in work_item.get("activities", []):
                     markers = []
@@ -130,6 +133,11 @@ def _render_status(report: dict) -> str:
     if ai_usage:
         lines.append(f"AI usage: {ai_usage.get('score')}/5 ({ai_usage.get('confidence')})"
                      f" — {ai_usage.get('reason')}")
+        lines.append("")
+
+    time_summary = report.get("time")
+    if time_summary:
+        lines.append(f"time: {time_summary.get('label')} in window")
         lines.append("")
 
     lines.append(f"Open work ({len(report.get('open_work') or [])}):")

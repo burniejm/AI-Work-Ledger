@@ -295,6 +295,19 @@ def status_report(conn, scope: "str | None", *, tz: str, rollover_hour: int, wor
 
     contradictions = query_scoped.open_contradictions(conn, filters)
 
+    time_summary = None
+    if filters["work_item_id"] is not None:
+        from datetime import date as _date, timedelta as _timedelta
+
+        from work_ledger.query import timespent
+        today = timeutil.workday_of(timeutil.utc_now_iso(), tz, rollover_hour)
+        start_day = (_date.fromisoformat(today) - _timedelta(days=workdays - 1)).isoformat()
+        window_start, _ = timeutil.workday_bounds(start_day, tz, rollover_hour)
+        _, window_end = timeutil.workday_bounds(today, tz, rollover_hour)
+        minutes = timespent.minutes_for_work_item(
+            conn, filters["work_item_id"], start_utc=window_start, end_utc=window_end)
+        time_summary = {"minutes": minutes, "label": timespent.format_minutes(minutes)}
+
     ai_usage = None
     if filters["work_item_id"] is not None:
         row = conn.execute(
@@ -309,6 +322,7 @@ def status_report(conn, scope: "str | None", *, tz: str, rollover_hour: int, wor
     return {
         "kind": "status",
         "ai_usage": ai_usage,
+        "time": time_summary,
         "scope": resolved,
         "open_work": open_work,
         "blockers": blockers,

@@ -313,12 +313,41 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
         for connection_id, fetched_at in stale_connections.items():
             notes.append(f"Jira data for {names.get(connection_id, connection_id)} is stale as of {fetched_at}")
 
+    clients_out = _finalize_clients(clients)
+    _attach_minutes(conn, clients_out, start_utc, end_utc)
+
     return {
-        "clients": _finalize_clients(clients),
+        "clients": clients_out,
         "excluded_low_confidence_count": excluded,
         "notes": notes,
         "generated_at": timeutil.utc_now_iso(),
     }
+
+
+def _attach_minutes(conn, clients_out: "list[dict]", start_utc: str, end_utc: str) -> None:
+    """Per-item and per-client active minutes for the report window.
+
+    A client's total pools every item's raw intervals before merging, so a
+    stretch of one session that fed two of the client's tickets is counted
+    once at the client level (each item still shows its own full share).
+    """
+    from work_ledger.query import timespent
+
+    for client_node in clients_out:
+        client_intervals = []
+        for project_node in client_node.get("projects") or []:
+            for wi_node in project_node.get("work_items") or []:
+                work_item_id = wi_node.get("work_item_id")
+                if work_item_id is None:
+                    wi_node["minutes"] = 0
+                    continue
+                intervals = timespent.intervals_for_work_item(
+                    conn, work_item_id, start_utc=start_utc, end_utc=end_utc)
+                wi_node["minutes"] = timespent.total_minutes(
+                    timespent.merge_intervals(intervals))
+                client_intervals.extend(intervals)
+        client_node["minutes"] = timespent.total_minutes(
+            timespent.merge_intervals(client_intervals))
 
 
 def day_report(conn, workday: str, *, tz: str, rollover_hour: int,

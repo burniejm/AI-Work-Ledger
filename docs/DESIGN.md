@@ -1096,6 +1096,16 @@ and `ai_usage_reason` are maintained by `infer/ai_usage.py` (migration 005):
   `CORRECTABLE_FIELDS`; a live correction pins the score and every recompute
   and refinement skips it.
 
+## Time on ticket (added post-v1.0)
+
+`query/timespent.py` computes session-active minutes at query time -- no
+schema, no stored state. Activity `started_at`/`ended_at` bounds become
+intervals (floor `time.min_activity_minutes` for point activities), clipped
+to the report window, merged per item (`merge_intervals`) and pooled before
+merging for client totals so shared stretches never double-count. Surfaced
+by `status_report` (work-item scope, over its recent window) and
+`_build_report` (per-item and per-client `minutes` for day/range reports).
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.
