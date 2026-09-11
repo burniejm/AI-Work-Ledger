@@ -89,3 +89,14 @@ worklog version           # installed plugin version and the schema version it s
 version when everything is current, `warn` naming any pending migrations,
 or `fail` if it hits a `NewerDatabase` or checksum-mismatch condition —
 never a silent success.
+
+
+## 1.7.0: migration checksum format
+
+1.7.0 changed the migration-identity hash to be comment-blind (comment and
+whitespace-only edits to an already-shipped migration file no longer read
+as schema drift). Databases stamped by older builds self-heal on the first
+run of any command: a recorded legacy hash that matches the file's raw
+bytes is silently re-stamped to the new form. `worklog migrate --repair`
+remains the explicit operator escape hatch for any case the automatic
+transition cannot prove (its output lists exactly what it re-stamped).

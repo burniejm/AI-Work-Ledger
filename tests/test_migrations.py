@@ -86,3 +86,25 @@ class TestMigrations(unittest.TestCase):
     def test_repair_is_idempotent(self):
         m.apply_all(self.conn)
         self.assertEqual(m.repair(self.conn), [])
+
+    def test_legacy_checksum_is_accepted_and_restamped(self):
+        # Pre-1.7.0 databases recorded sha256 of the raw file bytes. A
+        # recorded legacy hash proves the file is byte-identical to what
+        # was applied, so upgrade must self-heal (re-stamp), not raise.
+        import hashlib
+        m.apply_all(self.conn)
+        raw = (pathlib.Path(self.sql_dir.name) / "001_fixture.sql").read_text()
+        legacy = hashlib.sha256(raw.encode()).hexdigest()
+        self.conn.execute(
+            "UPDATE schema_migrations SET checksum=? WHERE version=1", (legacy,))
+        self.assertEqual(m.apply_all(self.conn), [])   # must not raise
+        row = self.conn.execute(
+            "SELECT checksum FROM schema_migrations WHERE version=1").fetchone()
+        self.assertEqual(row["checksum"], m._checksum(raw), "not re-stamped")
+
+    def test_a_checksum_matching_neither_algorithm_still_raises(self):
+        m.apply_all(self.conn)
+        self.conn.execute(
+            "UPDATE schema_migrations SET checksum='junk' WHERE version=1")
+        with self.assertRaises(m.ChecksumMismatch):
+            m.apply_all(self.conn)

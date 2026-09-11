@@ -229,6 +229,14 @@ def _strip_comments(sql: str) -> str:
     return "".join(out)
 
 
+def _legacy_checksum(sql: str) -> str:
+    """The pre-1.7.0 identity hash: sha256 of the raw file bytes. Kept only
+    so upgrade can recognize databases stamped by older builds -- a recorded
+    legacy hash proves the file is byte-identical to what was applied, and
+    `apply_all` silently re-stamps it to `_checksum` form."""
+    return hashlib.sha256(sql.encode()).hexdigest()
+
+
 def _checksum(sql: str) -> str:
     """The migration-identity hash used everywhere a checksum is recorded
     or verified: comment-blind (including the now-blank line a removed
@@ -274,7 +282,8 @@ def _apply_one(conn: sqlite3.Connection, version: int, name: str, sql: str) -> b
             "SELECT checksum FROM schema_migrations WHERE version=?", (version,)
         ).fetchone()
         if row is not None:
-            if row["checksum"] != checksum:
+            if row["checksum"] != checksum \
+                    and row["checksum"] != _legacy_checksum(sql):
                 raise ChecksumMismatch(
                     f"migration {version} checksum mismatch: "
                     f"recorded {row['checksum']}, expected {checksum}"
@@ -317,6 +326,14 @@ def apply_all(conn: sqlite3.Connection) -> "list[int]":
         _, sql = match
         expected = _checksum(sql)
         if row["checksum"] != expected:
+            if row["checksum"] == _legacy_checksum(sql):
+                # Stamped by a pre-1.7.0 build; the raw-byte hash matching
+                # proves the file is unchanged. Self-heal to the new form.
+                with connection.transaction(conn):
+                    conn.execute(
+                        "UPDATE schema_migrations SET checksum=? WHERE version=?",
+                        (expected, version))
+                continue
             raise ChecksumMismatch(
                 f"migration {version} checksum mismatch: "
                 f"recorded {row['checksum']}, expected {expected}"
