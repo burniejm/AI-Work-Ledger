@@ -1106,6 +1106,16 @@ merging for client totals so shared stretches never double-count. Surfaced
 by `status_report` (work-item scope, over its recent window) and
 `_build_report` (per-item and per-client `minutes` for day/range reports).
 
+## Timesheets (added post-v1.0)
+
+`query/timesheet.py` + `worklog timesheet`: rows grouped by (workday,
+ticket) for one client over a workday range, minutes via
+`query.timespent`'s merged intervals clipped per day. Client-facing by
+default -- AI-usage fields require `--internal`. `--round N` rounds each
+row up; day and grand totals sum the rounded rows. Pure query/rendering:
+no schema, no stored state. Activities without a work item are skipped
+(a timesheet row needs a ticket); they still appear in `worklog day`.
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.

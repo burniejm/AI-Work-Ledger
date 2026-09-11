@@ -60,6 +60,7 @@ for the full flag list.
 | `worklog day <expr>` | A report for one workday (`today`, `yesterday`, `2026-08-29`, `august 29`). |
 | `worklog range <start> <end>` | A report spanning a range of workdays. |
 | `worklog status [scope]` | Recent status for a client, project, or work item (or everything). Ticket scopes include the AI-usage score (below). |
+| `worklog timesheet <client> --from <day> --to <day>` | Client-facing timesheet: one row per workday and ticket with merged minutes. `--format md\|csv\|json\|text`, `--round <minutes>` rounds rows up to billing increments, `--internal` adds AI-usage fields (excluded by default). |
 | `worklog remaining [scope] [--state STATE]` | Open remaining items, optionally filtered by scope or state. |
 | `worklog blocked [scope]` | Remaining items currently marked blocked. |
 | `worklog stale [--days N]` | Work items with no activity in N days (default from config). |
@@ -161,6 +162,15 @@ An activity with no end bound counts as `time.min_activity_minutes`
 (default 5). This measures evidence-bounded *session* time, not wall-clock
 effort — human coding outside Claude sessions is invisible here, the same
 caveat as the AI-usage score's human side.
+
+## Timesheets
+
+`worklog timesheet Acme --from monday --to today` produces a paste-ready
+markdown table (or CSV/JSON) of workday x ticket rows with the same merged
+minutes the reports use, day subtotals, and a grand total. It is
+**client-facing by default**: AI-usage fields never appear unless you pass
+`--internal`. `--round 15` rounds each row up to quarter-hour billing
+blocks, with totals summed from the rounded rows so the invoice adds up.
 
 ## Known limitations
 

@@ -72,7 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
         # conflict on one subparser calls `_remove_action` on the shared
         # `common` parser itself, silently deleting --format for every
         # subcommand built afterwards.)
-        sp = sub.add_parser(name) if name == "export" else sub.add_parser(name, parents=[common])
+        # `export` and `timesheet` define their own `--format` (output styles
+        # beyond text/json) rather than inheriting the shared one.
+        if name in ("export", "timesheet"):
+            sp = sub.add_parser(name)
+        else:
+            sp = sub.add_parser(name, parents=[common])
         if name in _PARSER_SETUPS:
             _PARSER_SETUPS[name](sp)
     return p
@@ -735,6 +740,54 @@ def _cmd_context(args: argparse.Namespace) -> int:
               f"inbox: {ctx['inbox_count']}")
         print(f"stale connections: {', '.join(ctx['stale_connections']) or '(none)'}")
     return 0
+
+
+def _setup_timesheet(sp: argparse.ArgumentParser) -> None:
+    # nargs='?' (not required): Ruling 1's contract test parses every
+    # registered subcommand as `[name, "--format", "json"]` with no other
+    # args, so a missing client must fail at runtime, not at parse time.
+    sp.add_argument("client", nargs="?")
+    sp.add_argument("--from", dest="from_day", default="today",
+                    help="first workday (expression or YYYY-MM-DD); default today")
+    sp.add_argument("--to", dest="to_day", default=None,
+                    help="last workday; default = --from")
+    sp.add_argument("--format", choices=("md", "csv", "text", "json"), default="md")
+    sp.add_argument("--round", dest="round_to", type=int, default=None, metavar="MINUTES",
+                    help="round each row's minutes UP to this increment (e.g. 15)")
+    sp.add_argument("--internal", action="store_true",
+                    help="include AI-usage fields (excluded by default: client-facing)")
+
+
+@register("timesheet", setup=_setup_timesheet)
+def _cmd_timesheet(args: argparse.Namespace) -> int:
+    """`worklog timesheet <client> --from X --to Y` -- client-facing rows of
+    (workday, ticket, summary, time), markdown by default. See
+    query/timesheet.py for the shape and the --internal/--round contracts."""
+    from work_ledger.query import timesheet as timesheet_mod
+
+    if not args.client:
+        print("worklog: timesheet requires a client name", file=sys.stderr)
+        return 2
+    tz, rollover_hour = _tz_and_rollover()
+    from_day = timeutil.parse_day_expr(args.from_day, tz, rollover_hour)
+    to_day = timeutil.parse_day_expr(args.to_day, tz, rollover_hour) \
+        if args.to_day else from_day
+    conn = _report_conn()
+    try:
+        try:
+            report = timesheet_mod.timesheet_report(
+                conn, args.client, from_day, to_day, tz=tz, rollover_hour=rollover_hour,
+                round_to=args.round_to, internal=args.internal)
+        except Exception as exc:
+            print(f"worklog: {exc}", file=sys.stderr)
+            return 2
+        if args.format == "json":
+            print(json.dumps(report, indent=2))
+        else:
+            print(timesheet_mod.render_timesheet(report, fmt=args.format))
+        return 0
+    finally:
+        conn.close()
 
 
 def _setup_contradictions(sp: argparse.ArgumentParser) -> None:
