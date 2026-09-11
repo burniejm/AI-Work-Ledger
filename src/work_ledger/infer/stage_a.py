@@ -1362,4 +1362,18 @@ def run(conn, session_id: str, *, hook_mode: bool = False) -> dict:
             if resolved == "low":
                 result["inbox"] += 1
 
+    # New evidence landed: refresh the AI-usage score of every work item this
+    # run touched. Imported here (not at module top) because ai_usage imports
+    # this module for `_is_user_prompt`/`_creates_a_commit`.
+    from work_ledger.infer import ai_usage as _ai_usage
+    touched = set()
+    for activity_id in result["activities"]:
+        row = conn.execute(
+            "SELECT work_item_id FROM activities WHERE id=? AND work_item_id IS NOT NULL",
+            (activity_id,)).fetchone()
+        if row is not None:
+            touched.add(row["work_item_id"])
+    for work_item_id in sorted(touched):
+        _ai_usage.recompute_for_work_item(conn, work_item_id, hook_mode=hook_mode)
+
     return result

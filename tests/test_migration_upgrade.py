@@ -49,9 +49,10 @@ class TestMigrationUpgrade(unittest.TestCase):
             "INSERT INTO settings(key,value,updated_at) VALUES ('device_key','abc',?)", (self.now,))
         before = [dict(r) for r in self.conn.execute("SELECT * FROM work_items")]
 
-        applied = m.apply_all(self.conn)                       # 002, 003, 004
-        self.assertEqual(applied, [2, 3, 4])
-        self.assertEqual(sorted(m.applied(self.conn)), [1, 2, 3, 4])
+        all_versions = [version for (version, _, _) in m.discover()]
+        applied = m.apply_all(self.conn)                       # everything after 001
+        self.assertEqual(applied, all_versions[1:])
+        self.assertEqual(sorted(m.applied(self.conn)), all_versions)
         self.assertEqual(m.pending(self.conn), [])
 
         after = [dict(r) for r in self.conn.execute("SELECT * FROM work_items")]
@@ -95,4 +96,5 @@ class TestMigrationUpgrade(unittest.TestCase):
         self._apply_up_to(2)
         self.assertNotEqual(m.pending(self.conn), [])
         m.apply_all(self.conn)                                  # must not raise NewerDatabase
-        self.assertEqual(sorted(m.applied(self.conn)), [1, 2, 3, 4])
+        self.assertEqual(sorted(m.applied(self.conn)),
+                         [version for (version, _, _) in m.discover()])

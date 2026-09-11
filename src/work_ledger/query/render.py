@@ -69,6 +69,9 @@ def _render_daily(report: dict) -> str:
                 jira = work_item.get("jira")
                 if jira:
                     lines.append(f"  jira: {jira.get('status')} ({jira.get('assignee') or 'unassigned'})")
+                ai_usage = work_item.get("ai_usage")
+                if ai_usage:
+                    lines.append(f"  AI {ai_usage.get('score')}/5 ({ai_usage.get('confidence')})")
 
                 for activity in work_item.get("activities", []):
                     markers = []
@@ -122,6 +125,12 @@ def _render_remaining_item(item: dict, *, with_explanation: bool = False) -> str
 
 def _render_status(report: dict) -> str:
     lines = [f"Status: {_scope_label(report)}", ""]
+
+    ai_usage = report.get("ai_usage")
+    if ai_usage:
+        lines.append(f"AI usage: {ai_usage.get('score')}/5 ({ai_usage.get('confidence')})"
+                     f" — {ai_usage.get('reason')}")
+        lines.append("")
 
     lines.append(f"Open work ({len(report.get('open_work') or [])}):")
     for item in report.get("open_work") or []:

@@ -1076,6 +1076,26 @@ A test (Task 38, `test_seeded_secrets_never_reach_db_logs_exports_or_backups`) s
 
 ---
 
+## AI-usage score (added post-v1.0)
+
+`work_items.ai_usage_score` (1-5, NULL = no evidence), `ai_usage_confidence`,
+and `ai_usage_reason` are maintained by `infer/ai_usage.py` (migration 005):
+
+- **Deterministic baseline** — `recompute_for_work_item` counts, over the
+  ticket's contributing sessions: AI edit-tool calls (`Edit`/`Write`/
+  `MultiEdit`/`NotebookEdit`), AI-made commits (`git_commit_signal` rows that
+  really created a commit), human-only commits (reconciled `commit` rows in
+  sessions with zero AI edits), and real user prompts. Fixed thresholds map
+  those to 1-5; the reason string carries the counts. Recomputed at the end
+  of `stage_a.run` for every touched work item and after
+  `corrections.move_activity` for both sides of the move.
+- **Stage B refinement** — the model may suggest a per-activity
+  `ai_usage_score`; `merge` clamps it to one step from the deterministic
+  baseline and stores it at `medium` confidence at most.
+- **Corrections own the value** — `ai_usage_score` is in
+  `CORRECTABLE_FIELDS`; a live correction pins the score and every recompute
+  and refinement skips it.
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.

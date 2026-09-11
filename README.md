@@ -59,7 +59,7 @@ for the full flag list.
 | `worklog today` | Today's workday report. |
 | `worklog day <expr>` | A report for one workday (`today`, `yesterday`, `2026-08-29`, `august 29`). |
 | `worklog range <start> <end>` | A report spanning a range of workdays. |
-| `worklog status [scope]` | Recent status for a client, project, or work item (or everything). |
+| `worklog status [scope]` | Recent status for a client, project, or work item (or everything). Ticket scopes include the AI-usage score (below). |
 | `worklog remaining [scope] [--state STATE]` | Open remaining items, optionally filtered by scope or state. |
 | `worklog blocked [scope]` | Remaining items currently marked blocked. |
 | `worklog stale [--days N]` | Work items with no activity in N days (default from config). |
@@ -122,6 +122,30 @@ Directly from the spec's non-goals for version one:
 - **Jira is strictly read-only.** No adapter in this codebase has a write
   method; Work Ledger never posts a comment, logs work, edits a field, or
   transitions a ticket.
+
+## AI-usage score
+
+Every Jira or local work item carries an **AI-usage score** — a 1-5 rating
+of how much of its code the AI wrote, recomputed automatically as evidence
+lands:
+
+| Score | Meaning |
+|---|---|
+| 5 | Essentially one-shot: nearly every edit came from AI tools, minimal steering. |
+| 4 | AI wrote most of it; the human steered with prompts or touch-ups. |
+| 3 | Genuinely mixed: AI edits and human-only commits both carry real weight. |
+| 2 | Mostly human: human-only commits dominate. |
+| 1 | AI advised only: sessions were read-only; the code came from human commits. |
+| — | No evidence at all (never shown as a guess). |
+
+The number is deterministic and explainable — `worklog status AB-76` shows
+it with its confidence and the counts behind it ("9 AI edits, 1 human-only
+commit across 2 sessions"). The Stage B model pass may refine it by at most
+one step (never more, capped at `medium` confidence), and `worklog correct`
+can pin it permanently with an audit trail — a corrected score is never
+recomputed over. Human-side coding is inferred from commits that show up in
+git history without matching Claude session activity, so the human side is
+an approximation; treat 2-vs-3 boundaries with that in mind.
 
 ## Known limitations
 

@@ -69,7 +69,8 @@ CORRECTABLE_FIELDS = {
                              "started_at","ended_at","stated_duration_minutes","confidence","in_inbox",
                              "idempotency_key"}),
     "remaining_items": frozenset({"work_item_id","client_id","project_id","title","detail","state","kind","confidence","in_inbox"}),
-    "work_items": frozenset({"client_id","project_id","title","description","local_state"}),
+    "work_items": frozenset({"client_id","project_id","title","description","local_state",
+                             "ai_usage_score","ai_usage_confidence","ai_usage_reason"}),
     "clients": frozenset({"name","notes"}),
     "projects": frozenset({"client_id","name"}),
     "decisions": frozenset({"work_item_id","statement","rationale","decided_at","confidence"}),
@@ -192,8 +193,12 @@ def move_activity(conn: sqlite3.Connection, activity_id: str, *, work_item_id=No
                 raise ValueError(f"no such activity: {activity_id!r}")
 
             changes = []
+            moved_work_items = set()
             if work_item_id is not None and work_item_id != row["work_item_id"]:
                 changes.append(("work_item_id", row["work_item_id"], work_item_id))
+                moved_work_items.add(work_item_id)
+                if row["work_item_id"] is not None:
+                    moved_work_items.add(row["work_item_id"])
             if client_id is not None and client_id != row["client_id"]:
                 changes.append(("client_id", row["client_id"], client_id))
             if project_id is not None and project_id != row["project_id"]:
@@ -265,6 +270,16 @@ def move_activity(conn: sqlite3.Connection, activity_id: str, *, work_item_id=No
                         source="correction", device_id=g.device_id,
                     )
                     g.record("aliases", alias_id, None, None, None, "create")
+
+    # A move changes which sessions' evidence backs each ticket, so both
+    # sides' AI-usage scores are stale. Recompute after the correction's own
+    # transactions have committed; the recompute skips any score a live
+    # correction pins. Local import: infer.ai_usage reaches back into
+    # infer.stage_a, which this module already imports.
+    if moved_work_items:
+        from work_ledger.infer import ai_usage as _ai_usage
+        for stale_item_id in sorted(moved_work_items):
+            _ai_usage.recompute_for_work_item(conn, stale_item_id)
 
     return g.id
 

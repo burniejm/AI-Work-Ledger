@@ -155,6 +155,11 @@ def _jira_status(conn, filters: dict, notes: list) -> "list[dict]":
     for row in rows:
         label = row["external_key"] or row["display_id"]
         stale_flag = bool(row["jira_stale"])
+        ai_usage = None
+        if row["ai_usage_score"] is not None:
+            ai_usage = {"score": row["ai_usage_score"],
+                        "confidence": row["ai_usage_confidence"],
+                        "reason": row["ai_usage_reason"]}
         entries.append({
             "work_item": label,
             "title": row["title"],
@@ -163,6 +168,7 @@ def _jira_status(conn, filters: dict, notes: list) -> "list[dict]":
             "assignee": row["jira_assignee"],
             "fetched_at": row["jira_fetched_at"],
             "stale": stale_flag,
+            "ai_usage": ai_usage,
         })
 
         fetched_old = False
@@ -289,8 +295,20 @@ def status_report(conn, scope: "str | None", *, tz: str, rollover_hour: int, wor
 
     contradictions = query_scoped.open_contradictions(conn, filters)
 
+    ai_usage = None
+    if filters["work_item_id"] is not None:
+        row = conn.execute(
+            "SELECT ai_usage_score, ai_usage_confidence, ai_usage_reason"
+            " FROM work_items WHERE id=? AND deleted_at IS NULL",
+            (filters["work_item_id"],)).fetchone()
+        if row is not None and row["ai_usage_score"] is not None:
+            ai_usage = {"score": row["ai_usage_score"],
+                        "confidence": row["ai_usage_confidence"],
+                        "reason": row["ai_usage_reason"]}
+
     return {
         "kind": "status",
+        "ai_usage": ai_usage,
         "scope": resolved,
         "open_work": open_work,
         "blockers": blockers,

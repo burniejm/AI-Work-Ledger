@@ -268,6 +268,7 @@ _SCHEMA_BLOCK = """{
       "client_hint": "string|null",
       "project_hint": "string|null",
       "confidence": "high|medium|low",
+      "ai_usage_score": "1-5|null -- how much of this activity's code the AI wrote: 1 = human coded it all (AI advised), 3 = genuinely mixed, 5 = essentially one-shot AI. Omit or null when the session does not show you enough to judge.",
       "evidence_event_ids": ["source_event id", "..."],
       "remaining": [{"title": "string", "detail": "string|null", "state": "open|blocked|waiting"}],
       "blockers": [{"title": "string", "detail": "string|null"}],
@@ -582,8 +583,17 @@ def validate_output(text: str, *, known_event_ids=None) -> dict:
                                            _MAX_DETAIL),
             })
 
+        ai_usage_score = raw.get("ai_usage_score")
+        if ai_usage_score is not None:
+            if isinstance(ai_usage_score, bool) or not isinstance(ai_usage_score, int) \
+                    or not (1 <= ai_usage_score <= 5):
+                raise StageBSchemaError(
+                    f"{where}.ai_usage_score must be an integer 1-5 or null,"
+                    f" got {ai_usage_score!r}")
+
         activities.append({
             "kind": kind,
+            "ai_usage_score": ai_usage_score,
             "summary": _require_str(raw.get("summary"), f"{where}.summary", _MAX_SUMMARY),
             "outcome": _optional_str(raw.get("outcome"), f"{where}.outcome", _MAX_OUTCOME),
             "ticket_hint": _optional_str(raw.get("ticket_hint"), f"{where}.ticket_hint",
@@ -1095,7 +1105,59 @@ def merge(conn, session_id: str, parsed: dict, bundle_hash: str, *, bundle=None)
             result["remaining_actions"][action] = result["remaining_actions"].get(action, 0) + 1
             result["remaining"] += 1
 
+    _refine_ai_usage(conn, parsed, stage_a_rows)
+
     return result
+
+
+def _refine_ai_usage(conn, parsed: dict, stage_a_rows) -> None:
+    """Apply the model's per-activity `ai_usage_score` suggestions.
+
+    The model refines, never decides: each suggestion is clamped to one step
+    from the deterministic baseline (`work_items.ai_usage_score`, freshly
+    recomputed here so merged evidence is included), a refinement is stored
+    at `medium` confidence at most (Ruling 6's split: deterministic counting
+    may be high, a model opinion may not), and a score a live correction
+    pins is never touched (`recompute_for_work_item` skips it, and so does
+    the write below). With no baseline (score NULL: no countable evidence)
+    the suggestion is dropped rather than trusted on its own.
+    """
+    from work_ledger.infer import ai_usage as _ai_usage
+
+    suggestions = {}
+    for entry in parsed.get("activities") or []:
+        model_score = entry.get("ai_usage_score")
+        if model_score is None:
+            continue
+        _client, _project, work_item_id, _anchor, _note = _attribution(
+            conn, entry, stage_a_rows)
+        if work_item_id is None:
+            continue
+        # Two activities on one ticket: keep the strongest claim of AI work.
+        current = suggestions.get(work_item_id)
+        suggestions[work_item_id] = model_score if current is None else max(current, model_score)
+
+    for work_item_id, model_score in sorted(suggestions.items()):
+        outcome = _ai_usage.recompute_for_work_item(conn, work_item_id)
+        if outcome.get("skipped"):
+            continue
+        baseline = outcome.get("score")
+        if baseline is None:
+            continue
+        clamped = max(baseline - 1, min(baseline + 1, model_score))
+        if clamped == baseline:
+            continue
+        row = conn.execute(
+            "SELECT ai_usage_reason FROM work_items WHERE id=? AND deleted_at IS NULL",
+            (work_item_id,)).fetchone()
+        if row is None:
+            continue
+        reason = f"{row['ai_usage_reason']}; Stage B adjusted {baseline} -> {clamped}"
+        with connection.transaction(conn):
+            conn.execute(
+                "UPDATE work_items SET ai_usage_score=?, ai_usage_confidence='medium',"
+                " ai_usage_reason=?, updated_at=? WHERE id=?",
+                (clamped, reason, timeutil.utc_now_iso(), work_item_id))
 
 
 # --------------------------------------------------------------------------

@@ -57,7 +57,8 @@ def _ensure_project(client_node: dict, project_id, project_name) -> dict:
 
 def _ensure_work_item(project_node: dict, work_item_id, *, external_key, display_id, title,
                        jira_status, jira_status_category, jira_assignee, jira_fetched_at,
-                       jira_stale, connection_id, stale_connections: dict) -> dict:
+                       jira_stale, connection_id, stale_connections: dict,
+                       ai_usage=None) -> dict:
     key = _key(work_item_id)
     work_items = project_node["work_items"]
     node = work_items.get(key)
@@ -77,6 +78,7 @@ def _ensure_work_item(project_node: dict, work_item_id, *, external_key, display
             "work_item_id": work_item_id,
             "title": title,
             "jira": jira,
+            "ai_usage": ai_usage,
             "activities": [],
             "remaining_discovered": [],
             "blockers": [],
@@ -116,6 +118,8 @@ def _activity_entry(row: sqlite3.Row, *, include_evidence: bool,
 _WORK_ITEM_JOIN_COLUMNS = (
     "wi.external_key AS wi_external_key, wi.display_id AS wi_display_id, wi.title AS wi_title, "
     "wi.jira_status, wi.jira_status_category, wi.jira_assignee, wi.jira_fetched_at, wi.jira_stale, "
+    "wi.ai_usage_score AS wi_ai_usage_score, wi.ai_usage_confidence AS wi_ai_usage_confidence, "
+    "wi.ai_usage_reason AS wi_ai_usage_reason, "
     "wi.connection_id AS wi_connection_id"
 )
 
@@ -132,6 +136,10 @@ def _attach(clients: dict, stale_connections: dict, row: sqlite3.Row, *,
         jira_assignee=row["jira_assignee"], jira_fetched_at=row["jira_fetched_at"],
         jira_stale=row["jira_stale"], connection_id=row["wi_connection_id"],
         stale_connections=stale_connections,
+        ai_usage=(None if row["wi_ai_usage_score"] is None else
+                  {"score": row["wi_ai_usage_score"],
+                   "confidence": row["wi_ai_usage_confidence"],
+                   "reason": row["wi_ai_usage_reason"]}),
     )
 
 

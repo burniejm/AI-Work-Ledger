@@ -56,6 +56,7 @@ name on `PATH` is the only fallback.
 | "what did I work on yesterday", "show my work for August 29" | `worklog day yesterday --format json` / `worklog day 2026-08-29 --format json` |
 | "what did I do this week", "August 24 through August 30" | `worklog range "august 24" "august 30" --format json` |
 | "give me the status of Acme", "how is AB-76 going" | `worklog status Acme --format json` / `worklog status AB-76 --format json` |
+| "how much AI did we use on AB-76", "was AB-76 mostly AI-written" | `worklog status AB-76 --format json` — read `ai_usage` (score 1-5, confidence, reason); null score means "no evidence, unknown" |
 | "what remains on AB-76", "what's left across everything" | `worklog remaining AB-76 --format json` / `worklog remaining --format json` |
 | "what is blocked", "what is blocked across all clients" | `worklog blocked --format json` / `worklog blocked Acme --format json` |
 | "what have I not touched in 14 days" | `worklog stale --days 14 --format json` |
