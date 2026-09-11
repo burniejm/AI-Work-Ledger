@@ -162,6 +162,84 @@ def _split_statements(sql: str) -> "list[str]":
     return statements
 
 
+def _strip_comments(sql: str) -> str:
+    """`sql` with '--' line comments and '/* */' block comments removed,
+    string/statement content otherwise untouched byte-for-byte.
+
+    Uses the same single-quote/comment state machine as `_split_statements`
+    (kept separate rather than shared, since one keeps comment text and the
+    other discards it) so a migration's checksum (`_checksum`) is blind to
+    comment-only edits -- e.g. redacting a real example value before
+    sharing a repo -- while staying sensitive to every byte of SQL a
+    migration actually executes.
+    """
+    out = []
+    i = 0
+    n = len(sql)
+    in_single = False
+    in_line_comment = False
+    in_block_comment = False
+    while i < n:
+        ch = sql[i]
+        nxt = sql[i + 1] if i + 1 < n else ""
+
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append(ch)
+            i += 1
+            continue
+
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                i += 2
+                in_block_comment = False
+                continue
+            i += 1
+            continue
+
+        if in_single:
+            out.append(ch)
+            if ch == "'":
+                if nxt == "'":
+                    out.append(nxt)
+                    i += 2
+                    continue
+                in_single = False
+            i += 1
+            continue
+
+        if ch == "'":
+            in_single = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "-" and nxt == "-":
+            in_line_comment = True
+            i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def _checksum(sql: str) -> str:
+    """The migration-identity hash used everywhere a checksum is recorded
+    or verified: comment-blind (including the now-blank line a removed
+    comment leaves behind) so it never trips over a redacted example value,
+    but sensitive to every byte of the SQL itself."""
+    stripped = _strip_comments(sql)
+    lines = (line.rstrip() for line in stripped.splitlines())
+    normalized = "\n".join(line for line in lines if line)
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def _apply_one(conn: sqlite3.Connection, version: int, name: str, sql: str) -> bool:
     """Apply one migration file and its schema_migrations row in a single transaction.
     Returns True when this call actually applied the migration, False when a
@@ -190,7 +268,7 @@ def _apply_one(conn: sqlite3.Connection, version: int, name: str, sql: str) -> b
     this loop even starts, and must not be silently waved through just
     because the row happened to be written moments ago instead of earlier.
     """
-    checksum = hashlib.sha256(sql.encode()).hexdigest()
+    checksum = _checksum(sql)
     with connection.transaction(conn):
         row = conn.execute(
             "SELECT checksum FROM schema_migrations WHERE version=?", (version,)
@@ -237,7 +315,7 @@ def apply_all(conn: sqlite3.Connection) -> "list[int]":
         if match is None:
             continue  # applied migration no longer ships a file; nothing to verify against
         _, sql = match
-        expected = hashlib.sha256(sql.encode()).hexdigest()
+        expected = _checksum(sql)
         if row["checksum"] != expected:
             raise ChecksumMismatch(
                 f"migration {version} checksum mismatch: "
@@ -250,6 +328,43 @@ def apply_all(conn: sqlite3.Connection) -> "list[int]":
         if _apply_one(conn, version, name, sql):
             applied_versions.append(version)
     return applied_versions
+
+
+def repair(conn: sqlite3.Connection) -> "list[int]":
+    """Re-stamp the recorded checksum of every already-applied migration to
+    match its current on-disk file, verbatim.
+
+    This is a deliberate, explicit escape hatch -- never called by
+    `apply_all`/`ensure_current` -- for exactly one situation: a migration
+    file changed in a way its author is certain is not a real schema drift
+    (the checksum algorithm itself changed, or an already-shipped file's
+    comments were edited, e.g. redacting a real example value before
+    sharing a repo). It does not, and cannot, verify the new content is
+    actually equivalent to what was applied; that judgment belongs to
+    whoever runs `worklog migrate --repair`, never to this function. A
+    real schema change slipped in here would be recorded as if it always
+    matched, silently defeating `ChecksumMismatch` -- so this must stay a
+    manual, one-at-a-time operator action, not something any normal code
+    path reaches for on its own.
+
+    Returns the versions whose recorded checksum actually changed.
+    """
+    done = applied(conn)
+    discovered_by_version = {version: sql for version, _, sql in discover()}
+    repaired = []
+    with connection.transaction(conn):
+        for version, row in done.items():
+            sql = discovered_by_version.get(version)
+            if sql is None:
+                continue
+            new_checksum = _checksum(sql)
+            if row["checksum"] != new_checksum:
+                conn.execute(
+                    "UPDATE schema_migrations SET checksum=? WHERE version=?",
+                    (new_checksum, version),
+                )
+                repaired.append(version)
+    return sorted(repaired)
 
 
 def ensure_current(conn: sqlite3.Connection) -> None:

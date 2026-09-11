@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
         # subcommand built afterwards.)
         # `export` and `timesheet` define their own `--format` (output styles
         # beyond text/json) rather than inheriting the shared one.
-        if name in ("export", "timesheet", "week"):
+        if name in ("export", "timesheet", "week", "report"):
             sp = sub.add_parser(name)
         else:
             sp = sub.add_parser(name, parents=[common])
@@ -192,6 +192,9 @@ def _cmd_config(args: argparse.Namespace) -> int:
 
 def _setup_migrate(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--status", action="store_true")
+    sp.add_argument("--repair", action="store_true",
+                    help="re-stamp recorded checksums to match today's files -- "
+                         "use only when you are certain the drift is not a real schema change")
 
 
 @register("migrate", setup=_setup_migrate)
@@ -215,6 +218,16 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
             else:
                 for row in rows:
                     print(f"{row['version']:03d}  {row['name']:<40} {row['status']}")
+            return 0
+
+        if args.repair:
+            repaired = migrations.repair(conn)
+            if args.format == "json":
+                print(json.dumps({"repaired": repaired}, indent=2))
+            elif repaired:
+                print("repaired: " + ", ".join(str(v) for v in repaired))
+            else:
+                print("nothing to repair")
             return 0
 
         applied_versions = migrations.apply_all(conn)
@@ -1571,9 +1584,6 @@ def _cmd_githooks(args: argparse.Namespace) -> int:
         conn.close()
 
 
-if __name__ == "__main__":          # pragma: no cover -- exercised via subprocess
-    raise SystemExit(main())
-
 
 def _setup_week(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("scope", nargs="?")
@@ -1634,3 +1644,68 @@ def _cmd_standup(args: argparse.Namespace) -> int:
         return 0
     finally:
         conn.close()
+
+
+def _setup_report(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("scope", nargs="?")
+    sp.add_argument("--period", choices=("today", "week", "month"), default="today")
+    sp.add_argument("--from", dest="from_day", default=None)
+    sp.add_argument("--to", dest="to_day", default=None)
+    sp.add_argument("--format", choices=("html", "json"), default="html")
+    sp.add_argument("--internal", action="store_true",
+                    help="include AI-usage and cost fields")
+    sp.add_argument("--out", help="output file (default: exports/reports/<name>.html)")
+    sp.add_argument("--no-open", action="store_true",
+                    help="write the file without opening a browser")
+
+
+@register("report", setup=_setup_report)
+def _cmd_report(args: argparse.Namespace) -> int:
+    """`worklog report [client] [--period week]` -- a self-contained HTML
+    snapshot (inline CSS/SVG, zero external requests); --format json prints
+    the underlying data instead."""
+    from work_ledger import paths as paths_mod
+    from work_ledger.query import htmlreport
+
+    tz, rollover_hour = _tz_and_rollover()
+    from_day = timeutil.parse_day_expr(args.from_day, tz, rollover_hour) \
+        if args.from_day else None
+    to_day = timeutil.parse_day_expr(args.to_day, tz, rollover_hour) \
+        if args.to_day else None
+    conn = _report_conn()
+    try:
+        try:
+            data = htmlreport.build_data(
+                conn, args.scope, period=args.period, from_day=from_day,
+                to_day=to_day, tz=tz, rollover_hour=rollover_hour,
+                internal=args.internal)
+        except Exception as exc:
+            print(f"worklog: {exc}", file=sys.stderr)
+            return 2
+    finally:
+        conn.close()
+
+    if args.format == "json":
+        print(json.dumps(data, indent=2))
+        return 0
+
+    document = htmlreport.render_html(data)
+    if args.out:
+        out_path = pathlib.Path(args.out)
+    else:
+        reports_dir = paths_mod.export_dir() / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        stamp = data["end_workday"]
+        scope_slug = (args.scope or "all").replace("/", "-").replace(" ", "-").lower()
+        out_path = reports_dir / f"{scope_slug}-{data['period'].replace(' ', '_')}-{stamp}.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(document)
+    print(str(out_path))
+    if not args.no_open:
+        import webbrowser
+        webbrowser.open(out_path.resolve().as_uri())
+    return 0
+
+
+if __name__ == "__main__":          # pragma: no cover -- exercised via subprocess
+    raise SystemExit(main())

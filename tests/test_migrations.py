@@ -56,3 +56,33 @@ class TestMigrations(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             m.discover()
+
+    def test_comment_only_edit_does_not_trip_checksum(self):
+        m.apply_all(self.conn)
+        (pathlib.Path(self.sql_dir.name) / "001_fixture.sql").write_text(
+            "-- redacted example, not a schema change\n"
+            "CREATE TABLE fixture_t (a INTEGER);\n", encoding="utf-8"
+        )
+        self.assertEqual(m.apply_all(self.conn), [])  # would raise ChecksumMismatch if not comment-blind
+
+    def test_real_sql_edit_still_trips_checksum(self):
+        m.apply_all(self.conn)
+        (pathlib.Path(self.sql_dir.name) / "001_fixture.sql").write_text(
+            "CREATE TABLE fixture_t (a INTEGER, b INTEGER);\n", encoding="utf-8"
+        )
+        with self.assertRaises(m.ChecksumMismatch):
+            m.apply_all(self.conn)
+
+    def test_repair_restamps_checksum_to_current_file(self):
+        m.apply_all(self.conn)
+        self.conn.execute("UPDATE schema_migrations SET checksum='stale' WHERE version=1")
+        self.assertEqual(m.repair(self.conn), [1])
+        row = self.conn.execute(
+            "SELECT checksum FROM schema_migrations WHERE version=1").fetchone()
+        self.assertEqual(row["checksum"],
+                         m._checksum((pathlib.Path(self.sql_dir.name) / "001_fixture.sql").read_text()))
+        self.assertEqual(m.apply_all(self.conn), [])  # no longer mismatched
+
+    def test_repair_is_idempotent(self):
+        m.apply_all(self.conn)
+        self.assertEqual(m.repair(self.conn), [])

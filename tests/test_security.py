@@ -47,7 +47,7 @@ SEEDED = ["ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
 TRUSTED_MEMBERSHIP_CONSTANTS = {"SOFT_DELETABLE", "CORRECTABLE_FIELDS"}
 
 LINE_LEVEL_ESCAPE_HATCH = {
-    ("db/migrations.py", 206): (
+    ("db/migrations.py", 284): (
         "stmt is one statement of a migration file's contents, read from disk "
         "by discover() at runtime -- never built from user, model, or Jira "
         "text, but its safety is a question of file provenance, not "

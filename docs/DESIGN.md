@@ -1150,6 +1150,17 @@ into client -> ticket rows with merged minutes and capped summaries;
 `status_report`'s blockers/waiting. Pure rendering; the `--internal`
 gate for AI/cost fields matches timesheets.
 
+## HTML reports (added post-v1.0)
+
+`query/htmlreport.py` + `worklog report`: `build_data` composes
+range_report (client-scoped in SQL), per-day merged minutes, status
+blockers, and internal-only cost totals; `render_html` emits one
+self-contained file (inline CSS, inline SVG bar chart with rounded
+data-ends and native tooltips, stat tiles, tables as the accessible
+view; dark mode selected, not flipped; every user string escaped).
+Single-day periods render tiles without a one-bar chart. Public output
+strips `ai_usage`/`claude` recursively before rendering.
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.
