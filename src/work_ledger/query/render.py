@@ -62,6 +62,8 @@ def _render_daily(report: dict) -> str:
         lines.append("(no activity)")
 
     for client in clients:
+        if client.get("claude"):
+            lines.append(f"{client.get('client')}: {_claude_line(client['claude'])}")
         for project in client.get("projects", []):
             for work_item in project.get("work_items", []):
                 lines.append(_header_line(client, project, work_item))
@@ -138,6 +140,11 @@ def _render_status(report: dict) -> str:
     time_summary = report.get("time")
     if time_summary:
         lines.append(f"time: {time_summary.get('label')} in window")
+        lines.append("")
+
+    claude = report.get("claude")
+    if claude:
+        lines.append(_claude_line(claude))
         lines.append("")
 
     lines.append(f"Open work ({len(report.get('open_work') or [])}):")
@@ -251,3 +258,14 @@ def _render_inbox(report: dict) -> str:
         for item in remaining_items:
             lines.append(f"  - {item.get('title')}")
     return "\n".join(lines)
+
+
+def _claude_line(claude: dict) -> str:
+    from work_ledger.query import tokencost
+    totals = claude.get("totals") or {}
+    line = (f"Claude usage: {tokencost.format_tokens(totals.get('input_tokens', 0))} in"
+            f" / {tokencost.format_tokens(totals.get('output_tokens', 0))} out")
+    cost = claude.get("cost_usd")
+    if cost is not None:
+        line += f" (~${cost:.2f})"
+    return line

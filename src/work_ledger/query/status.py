@@ -308,6 +308,13 @@ def status_report(conn, scope: "str | None", *, tz: str, rollover_hour: int, wor
             conn, filters["work_item_id"], start_utc=window_start, end_utc=window_end)
         time_summary = {"minutes": minutes, "label": timespent.format_minutes(minutes)}
 
+    claude = None
+    if filters["work_item_id"] is not None:
+        from work_ledger.query import tokencost
+        usage = tokencost.tokens_for_work_item(conn, filters["work_item_id"])
+        if usage["models"]:
+            claude = usage
+
     ai_usage = None
     if filters["work_item_id"] is not None:
         row = conn.execute(
@@ -323,6 +330,7 @@ def status_report(conn, scope: "str | None", *, tz: str, rollover_hour: int, wor
         "kind": "status",
         "ai_usage": ai_usage,
         "time": time_summary,
+        "claude": claude,
         "scope": resolved,
         "open_work": open_work,
         "blockers": blockers,

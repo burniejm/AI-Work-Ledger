@@ -293,6 +293,7 @@ def reconcile_transcript(conn, session_id: str, *, hook_mode: bool = False,
 
     ceiling = _MAX_RECORDS_PER_RECONCILE if max_records is None else int(max_records)
     created = 0
+    token_sums: dict = {}          # model -> 4-tuple accumulators, flushed below
     last_uuid = None
     examined = 0
     after_uuid = None if from_start else session_row["transcript_watermark"]
@@ -333,6 +334,18 @@ def reconcile_transcript(conn, session_id: str, *, hook_mode: bool = False,
         )
         if row_id is not None:
             created += 1
+            # Token accounting rides the same exactly-once gate as the event
+            # row itself: a replayed record creates no row and adds no tokens.
+            usage = summary.get("usage")
+            if usage and summary.get("model"):
+                sums = token_sums.setdefault(summary["model"], [0, 0, 0, 0])
+                sums[0] += usage.get("input_tokens", 0)
+                sums[1] += usage.get("output_tokens", 0)
+                sums[2] += usage.get("cache_read_input_tokens", 0)
+                sums[3] += usage.get("cache_creation_input_tokens", 0)
+
+    if token_sums:
+        _accumulate_session_tokens(conn, session_id, token_sums, hook_mode=hook_mode)
 
     if last_uuid and last_uuid != session_row["transcript_watermark"]:
         now = timeutil.utc_now_iso()
@@ -342,6 +355,33 @@ def reconcile_transcript(conn, session_id: str, *, hook_mode: bool = False,
                 (last_uuid, now, session_id),
             )
     return created
+
+
+def _accumulate_session_tokens(conn, session_id: str, token_sums: dict,
+                                *, hook_mode: bool = False) -> None:
+    """Add this reconcile pass's newly ingested usage to `session_tokens`.
+
+    Increments, not overwrites: reconciliation is incremental (watermarked),
+    so each pass carries only records never counted before.
+    """
+    from work_ledger import entities, ids as _ids
+    device_id = entities.current_device(conn, hook_mode=hook_mode)
+    now = timeutil.utc_now_iso()
+    with connection.transaction(conn, hook_mode=hook_mode):
+        for model, (inp, out, cread, ccreate) in sorted(token_sums.items()):
+            conn.execute(
+                "INSERT INTO session_tokens(id, session_id, model, input_tokens,"
+                " output_tokens, cache_read_tokens, cache_creation_tokens,"
+                " origin_device_id, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(session_id, model) DO UPDATE SET"
+                "  input_tokens = input_tokens + excluded.input_tokens,"
+                "  output_tokens = output_tokens + excluded.output_tokens,"
+                "  cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,"
+                "  cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,"
+                "  updated_at = excluded.updated_at",
+                (_ids.new_id(), session_id, model, inp, out, cread, ccreate,
+                 device_id, now, now))
 
 
 def _repo_root_for_session(conn, session_row) -> "str | None":

@@ -315,6 +315,7 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
 
     clients_out = _finalize_clients(clients)
     _attach_minutes(conn, clients_out, start_utc, end_utc)
+    _attach_claude_usage(conn, clients_out, start_utc, end_utc)
 
     return {
         "clients": clients_out,
@@ -322,6 +323,27 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
         "notes": notes,
         "generated_at": timeutil.utc_now_iso(),
     }
+
+
+def _attach_claude_usage(conn, clients_out: "list[dict]", start_utc: str,
+                          end_utc: str) -> None:
+    """Per-client token/cost totals for the window: the client's sessions
+    (via its activities in the window), each counted once."""
+    from work_ledger.query import tokencost
+
+    for client_node in clients_out:
+        client_id = client_node.get("client_id")
+        if client_id is None:
+            client_node["claude"] = None
+            continue
+        rows = conn.execute(
+            "SELECT DISTINCT s.session_id FROM activities a"
+            " JOIN sessions s ON s.id = a.session_row_id"
+            " WHERE a.client_id=? AND a.deleted_at IS NULL"
+            "   AND a.started_at >= ? AND a.started_at < ?",
+            (client_id, start_utc, end_utc)).fetchall()
+        usage = tokencost.tokens_for_sessions(conn, [r["session_id"] for r in rows])
+        client_node["claude"] = usage if usage["models"] else None
 
 
 def _attach_minutes(conn, clients_out: "list[dict]", start_utc: str, end_utc: str) -> None:

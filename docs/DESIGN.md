@@ -1130,6 +1130,18 @@ definitive human commits, sha-deduped against reconciled ones;
 them). The capture CLI path always exits 0: a broken ledger must never
 break `git commit`. Wizard step `githooks` is strictly opt-in.
 
+## Token cost (added post-v1.0)
+
+Migration 007 (`session_tokens`, schema 7): transcript reconciliation
+extracts `message.model` + `message.usage` per record and accumulates per
+(session, model) behind the same exactly-once gate as the event row itself
+(a replayed record adds nothing). `query/tokencost.py` prices sums from a
+prefix-matched rate table (defaults = first-party pricing; cache reads
+0.1x / writes 1.25x input as standard approximations; all overridable via
+`costs.model_rates`); unknown models return counts with `cost_usd: None`.
+Ticket rollups sum sessions whole; client/day rollups count each session
+once (`tokens_for_sessions`).
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.

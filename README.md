@@ -189,6 +189,27 @@ pass through the same redaction as everything else, and `worklog
 uninstall` removes every installed hook line. This is the only Work
 Ledger feature that touches your repositories, and it is opt-in per repo.
 
+## Claude usage & cost
+
+Transcript reconciliation accumulates each session's token usage per model
+(exactly once per record), and reports price it from a per-model rate table
+— `worklog status AB-76` shows `Claude usage: 1.2M in / 85k out (~$8.13)`,
+and day reports show per-client totals (each session counted once).
+Unknown models show token counts with no cost — never a guessed price.
+Rates ship with current Claude first-party pricing and standard cache
+multipliers; override or extend them via `costs.model_rates` in
+config.yaml if pricing changes:
+
+```yaml
+costs:
+  model_rates:
+    claude-opus-5: {input: 5.0, output: 25.0}   # USD per MTok
+```
+
+A ticket's number sums its sessions whole (same granularity as the
+AI-usage score), so tickets sharing a session overlap; client/day totals
+never double-count.
+
 ## Known limitations
 
 Work Ledger runs inside Claude Code's hook system, which has real limits —

@@ -194,6 +194,18 @@ def summarize_record(rec: dict) -> Optional[dict]:
 
     text, tool_uses, tool_results = _extract_content(message.get("content"))
 
+    model = message.get("model")
+    usage_raw = message.get("usage")
+    usage = None
+    if isinstance(usage_raw, dict):
+        cleaned = {}
+        for key in ("input_tokens", "output_tokens",
+                    "cache_read_input_tokens", "cache_creation_input_tokens"):
+            value = usage_raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                cleaned[key] = value
+        usage = cleaned or None
+
     return {
         "uuid": rec.get("uuid"),
         "parent_uuid": rec.get("parentUuid"),
@@ -207,4 +219,6 @@ def summarize_record(rec: dict) -> Optional[dict]:
         "text": text,
         "tool_uses": tool_uses,
         "tool_results": tool_results,
+        "model": model if isinstance(model, str) and model else None,
+        "usage": usage,
     }

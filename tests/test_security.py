@@ -52,12 +52,12 @@ LINE_LEVEL_ESCAPE_HATCH = {
         "by discover() at runtime -- never built from user, model, or Jira "
         "text, but its safety is a question of file provenance, not "
         "something visible in this repository's own source AST"),
-    ("backup.py", 475): (
+    ("backup.py", 477): (
         "cols (via ','.join(cols)) is _table_columns(conn, table)'s live "
         "PRAGMA table_info() column list -- this project's own schema, "
         "reflected from the database at runtime, never caller/import-file "
         "input; table itself is separately proven safe (IMPORT_ORDER)"),
-    ("backup.py", 485): (
+    ("backup.py", 487): (
         "sets is built from update_cols, itself filtered from the same "
         "PRAGMA table_info() column list as the entry above -- same "
         "database-schema provenance, not something visible in this "
