@@ -16,7 +16,7 @@ import io
 import math
 
 from work_ledger import timeutil
-from work_ledger.query import status as query_status, timespent
+from work_ledger.query import status as query_status, summaries as query_summaries, timespent
 
 _MAX_SUMMARY_CHARS = 200
 
@@ -64,8 +64,7 @@ def timesheet_report(conn, client: str, from_day: str, to_day: str, *,
                           "confidence": row["ai_usage_confidence"],
                           "reason": row["ai_usage_reason"]}),
         })
-        if row["summary"] and row["summary"] not in bucket["summaries"]:
-            bucket["summaries"].append(row["summary"])
+        bucket["summaries"].append(row["summary"])
 
     rows = []
     day_totals: dict = {}
@@ -76,7 +75,7 @@ def timesheet_report(conn, client: str, from_day: str, to_day: str, *,
         minutes = timespent.total_minutes(timespent.merge_intervals(
             timespent.intervals_for_work_item(
                 conn, work_item_id, start_utc=day_start, end_utc=day_end)))
-        summary = "; ".join(bucket["summaries"])[:_MAX_SUMMARY_CHARS]
+        summary = "; ".join(query_summaries.dedupe(bucket["summaries"]))[:_MAX_SUMMARY_CHARS]
         out = {
             "workday": workday,
             "ticket": bucket["ticket"],

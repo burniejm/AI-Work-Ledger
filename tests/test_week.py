@@ -100,6 +100,24 @@ class TestWeekReport(_WeekCase):
         self.assertIn("AB-76", text)
         self.assertIn("1h", text)
 
+    def test_markdown_render_internal_keeps_claude_line_in_the_list(self):
+        report = {
+            "start_workday": self.today, "end_workday": self.today,
+            "clients": [{
+                "client": "Acme", "minutes": 60,
+                "items": [{"ticket": "AB-76", "title": "Upload recovery",
+                          "minutes": 60, "summaries": ["did the thing"]}],
+                "claude": {"totals": {"input_tokens": 100, "output_tokens": 50},
+                          "cost_usd": 0.01},
+            }],
+            "total_minutes": 60,
+        }
+        text = week.render_week(report, fmt="md")
+        claude_lines = [line for line in text.splitlines() if "Claude:" in line]
+        self.assertEqual(len(claude_lines), 1)
+        self.assertTrue(claude_lines[0].startswith("- "),
+                        f"Claude totals line should be a list item, got: {claude_lines[0]!r}")
+
 
 class TestStandup(_WeekCase):
     def test_three_sections(self):
@@ -127,6 +145,37 @@ class TestStandup(_WeekCase):
         report = week.standup_report(self.conn, None, tz=self.TZ, rollover_hour=3)
         text = week.render_standup(report)
         self.assertIn("nothing recorded", text)
+
+    def _globex_activity_on(self, workday, summary):
+        globex = ent.upsert_client(self.conn, "Globex")
+        other = wi.upsert_external(self.conn, "c1", "GX-1", title="o", client_id=globex)
+        start_utc, _ = timeutil.workday_bounds(workday, self.TZ, 3)
+        started = timeutil.parse_iso(start_utc) + timedelta(hours=14)
+        now = timeutil.utc_now_iso()
+        aid = ids.new_id()
+        self.conn.execute(
+            "INSERT INTO activities(id,work_item_id,client_id,kind,summary,started_at,"
+            "confidence,source,idempotency_key,source_hash,origin_device_id,created_at,updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (aid, other, globex, "code", summary,
+             started.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+             "high", "stage_a", aid, "h", "d", now, now))
+
+    def test_scope_by_work_item_hides_other_clients_activity(self):
+        self._activity_on(self.today, summary="Acme work")
+        self._globex_activity_on(self.today, "Globex work")
+        report = week.standup_report(self.conn, "AB-76", tz=self.TZ, rollover_hour=3)
+        text = week.render_standup(report)
+        self.assertIn("Acme work", text)
+        self.assertNotIn("Globex work", text)
+
+    def test_scope_by_client_hides_other_clients_activity(self):
+        self._activity_on(self.today, summary="Acme work")
+        self._globex_activity_on(self.today, "Globex work")
+        report = week.standup_report(self.conn, "Acme", tz=self.TZ, rollover_hour=3)
+        text = week.render_standup(report)
+        self.assertIn("Acme work", text)
+        self.assertNotIn("Globex work", text)
 
 
 class TestCli(_WeekCase):

@@ -171,20 +171,21 @@ def _finalize_clients(clients: dict) -> "list[dict]":
 
 
 def _build_report(conn, start_utc: str, end_utc: str, *,
-                   include_evidence: bool, include_inbox: bool) -> dict:
+                   include_evidence: bool, include_inbox: bool, client_id=None) -> dict:
     clients: dict = {}
     stale_connections: dict = {}
     excluded = 0
 
+    client_clause = " AND a.client_id=?" if client_id is not None else ""
     activity_rows = conn.execute(
         "SELECT a.*, c.name AS client_name, p.name AS project_name, " + _WORK_ITEM_JOIN_COLUMNS + " "
         "FROM activities a "
         "LEFT JOIN clients c ON c.id = a.client_id "
         "LEFT JOIN projects p ON p.id = a.project_id "
         "LEFT JOIN work_items wi ON wi.id = a.work_item_id "
-        "WHERE a.deleted_at IS NULL AND a.started_at >= ? AND a.started_at < ? "
+        "WHERE a.deleted_at IS NULL AND a.started_at >= ? AND a.started_at < ?" + client_clause + " "
         "ORDER BY a.started_at",
-        (start_utc, end_utc),
+        (start_utc, end_utc) + ((client_id,) if client_id is not None else ()),
     ).fetchall()
 
     included_activities = []
@@ -233,6 +234,7 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
             evidence_by_activity=evidence_by_activity, conflict_lookup=conflict_lookup,
         ))
 
+    ri_clause = " AND ri.client_id=?" if client_id is not None else ""
     for kind, field in (("remaining", "remaining_discovered"), ("blocker", "blockers")):
         rows = conn.execute(
             "SELECT ri.*, c.name AS client_name, p.name AS project_name, " + _WORK_ITEM_JOIN_COLUMNS + " "
@@ -240,9 +242,9 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
             "LEFT JOIN clients c ON c.id = ri.client_id "
             "LEFT JOIN projects p ON p.id = ri.project_id "
             "LEFT JOIN work_items wi ON wi.id = ri.work_item_id "
-            "WHERE ri.deleted_at IS NULL AND ri.kind=? AND ri.first_seen_at >= ? AND ri.first_seen_at < ? "
-            "ORDER BY ri.first_seen_at",
-            (kind, start_utc, end_utc),
+            "WHERE ri.deleted_at IS NULL AND ri.kind=? AND ri.first_seen_at >= ? AND ri.first_seen_at < ?"
+            + ri_clause + " ORDER BY ri.first_seen_at",
+            (kind, start_utc, end_utc) + ((client_id,) if client_id is not None else ()),
         ).fetchall()
         for row in rows:
             if row["in_inbox"] and not include_inbox:
@@ -262,9 +264,10 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
         "LEFT JOIN clients c ON c.id = d.client_id "
         "LEFT JOIN projects p ON p.id = d.project_id "
         "LEFT JOIN work_items wi ON wi.id = d.work_item_id "
-        "WHERE d.deleted_at IS NULL AND d.decided_at >= ? AND d.decided_at < ? "
+        "WHERE d.deleted_at IS NULL AND d.decided_at >= ? AND d.decided_at < ?"
+        + (" AND d.client_id=?" if client_id is not None else "") + " "
         "ORDER BY d.decided_at",
-        (start_utc, end_utc),
+        (start_utc, end_utc) + ((client_id,) if client_id is not None else ()),
     ).fetchall()
     for row in decision_rows:
         wi_node = _attach(
@@ -286,9 +289,10 @@ def _build_report(conn, start_utc: str, end_utc: str, *,
         "LEFT JOIN clients c ON c.id = wi.client_id "
         "LEFT JOIN projects p ON p.id = wi.project_id "
         "WHERE co.deleted_at IS NULL AND co.status='open' "
-        "AND co.detected_at >= ? AND co.detected_at < ? "
+        "AND co.detected_at >= ? AND co.detected_at < ?"
+        + (" AND wi.client_id=?" if client_id is not None else "") + " "
         "ORDER BY co.detected_at",
-        (start_utc, end_utc),
+        (start_utc, end_utc) + ((client_id,) if client_id is not None else ()),
     ).fetchall()
     for row in contradiction_rows:
         wi_node = _attach(
@@ -373,11 +377,16 @@ def _attach_minutes(conn, clients_out: "list[dict]", start_utc: str, end_utc: st
 
 
 def day_report(conn, workday: str, *, tz: str, rollover_hour: int,
-               include_evidence: bool = False, include_inbox: bool = False) -> dict:
-    """Group activities/remaining/blockers/decisions/contradictions for one workday."""
+               include_evidence: bool = False, include_inbox: bool = False,
+               client_id=None) -> dict:
+    """Group activities/remaining/blockers/decisions/contradictions for one workday.
+
+    `client_id`, when given, scopes every underlying query to that client
+    instead of building the whole-ledger tree and discarding the rest.
+    """
     start_utc, end_utc = timeutil.workday_bounds(workday, tz, rollover_hour)
     base = _build_report(conn, start_utc, end_utc, include_evidence=include_evidence,
-                          include_inbox=include_inbox)
+                          include_inbox=include_inbox, client_id=client_id)
     return {
         "kind": "day",
         "workday": workday,
@@ -387,12 +396,17 @@ def day_report(conn, workday: str, *, tz: str, rollover_hour: int,
 
 
 def range_report(conn, start_workday: str, end_workday: str, *, tz: str, rollover_hour: int,
-                  include_evidence: bool = False, include_inbox: bool = False) -> dict:
-    """Same grouping as `day_report`, merged across every workday in [start_workday, end_workday]."""
+                  include_evidence: bool = False, include_inbox: bool = False,
+                  client_id=None) -> dict:
+    """Same grouping as `day_report`, merged across every workday in [start_workday, end_workday].
+
+    `client_id`, when given, scopes every underlying query to that client
+    instead of building the whole-ledger tree and discarding the rest.
+    """
     start_utc, _ = timeutil.workday_bounds(start_workday, tz, rollover_hour)
     _, end_utc = timeutil.workday_bounds(end_workday, tz, rollover_hour)
     base = _build_report(conn, start_utc, end_utc, include_evidence=include_evidence,
-                          include_inbox=include_inbox)
+                          include_inbox=include_inbox, client_id=client_id)
     return {
         "kind": "range",
         "start_workday": start_workday,

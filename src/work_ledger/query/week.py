@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from work_ledger import timeutil
 from work_ledger.query import daily as query_daily
 from work_ledger.query import status as query_status
+from work_ledger.query import summaries as query_summaries
 from work_ledger.query import timespent
 
 _MAX_SUMMARIES_PER_ITEM = 5
@@ -26,11 +27,8 @@ def _item_rows(client_node: dict, *, internal: bool) -> "list[dict]":
     items = []
     for project_node in client_node.get("projects") or []:
         for node in project_node.get("work_items") or []:
-            summaries = []
-            for activity in node.get("activities") or []:
-                summary = activity.get("summary")
-                if summary and summary not in summaries:
-                    summaries.append(summary)
+            summaries = query_summaries.dedupe(
+                activity.get("summary") for activity in node.get("activities") or [])
             item = {
                 "ticket": node.get("work_item"),
                 "title": node.get("title"),
@@ -54,13 +52,12 @@ def week_report(conn, scope: "str | None", *, ending: str, tz: str,
             f" is a {resolved['kind']}")
 
     start = monday_of(ending)
+    scope_client_id = resolved["id"] if resolved["kind"] == "client" else None
     base = query_daily.range_report(conn, start, ending, tz=tz,
-                                    rollover_hour=rollover_hour)
+                                    rollover_hour=rollover_hour, client_id=scope_client_id)
     clients = []
     total_minutes = 0
     for client_node in base.get("clients") or []:
-        if resolved["kind"] == "client" and client_node.get("client_id") != resolved["id"]:
-            continue
         entry = {
             "client": client_node.get("client"),
             "minutes": client_node.get("minutes") or 0,
@@ -98,9 +95,9 @@ def _render_week_lines(report: dict, *, md: bool) -> str:
     for client in report["clients"]:
         heading = f"{client['client']} — {timespent.format_minutes(client['minutes'])}"
         lines.append(f"## {heading}" if md else heading)
+        marker = "- " if md else "  "
         for item in client["items"]:
             summary = "; ".join(item["summaries"]) or item["title"] or ""
-            marker = "- " if md else "  "
             extra = ""
             if item.get("ai_usage"):
                 extra = f" [AI {item['ai_usage'].get('score')}/5]"
@@ -112,7 +109,7 @@ def _render_week_lines(report: dict, *, md: bool) -> str:
             totals = claude.get("totals") or {}
             cost = claude.get("cost_usd")
             cost_text = f" (~${cost:.2f})" if cost is not None else ""
-            lines.append(f"{'  ' if not md else ''}Claude: "
+            lines.append(f"{marker}Claude: "
                          f"{tokencost.format_tokens(totals.get('input_tokens', 0))} in / "
                          f"{tokencost.format_tokens(totals.get('output_tokens', 0))} out"
                          f"{cost_text}")
@@ -122,19 +119,23 @@ def _render_week_lines(report: dict, *, md: bool) -> str:
 
 
 def _day_lines(conn, workday: str, *, tz: str, rollover_hour: int,
-               client_id) -> "list[str]":
-    report = query_daily.day_report(conn, workday, tz=tz, rollover_hour=rollover_hour)
+               resolved: dict) -> "list[str]":
+    """Activity lines for `workday`, scoped to `resolved` (any kind
+    `resolve_scope` returns -- client/project/work_item/all)."""
+    kind, scope_id = resolved["kind"], resolved["id"]
+    report = query_daily.day_report(
+        conn, workday, tz=tz, rollover_hour=rollover_hour,
+        client_id=scope_id if kind == "client" else None)
     lines = []
     for client_node in report.get("clients") or []:
-        if client_id is not None and client_node.get("client_id") != client_id:
-            continue
         for project_node in client_node.get("projects") or []:
+            if kind == "project" and project_node.get("project_id") != scope_id:
+                continue
             for node in project_node.get("work_items") or []:
-                summaries = []
-                for activity in node.get("activities") or []:
-                    summary = activity.get("summary")
-                    if summary and summary not in summaries:
-                        summaries.append(summary)
+                if kind == "work_item" and node.get("work_item_id") != scope_id:
+                    continue
+                summaries = query_summaries.dedupe(
+                    activity.get("summary") for activity in node.get("activities") or [])
                 if summaries:
                     lines.append(f"{node.get('work_item')}: "
                                  + "; ".join(summaries[:_MAX_SUMMARIES_PER_ITEM]))
@@ -144,7 +145,6 @@ def _day_lines(conn, workday: str, *, tz: str, rollover_hour: int,
 def standup_report(conn, scope: "str | None", *, tz: str, rollover_hour: int) -> dict:
     """Yesterday / Today / Blockers, terse by design."""
     resolved = query_status.resolve_scope(conn, scope)
-    client_id = resolved["id"] if resolved["kind"] == "client" else None
 
     today = timeutil.workday_of(timeutil.utc_now_iso(), tz, rollover_hour)
     yesterday = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
@@ -163,11 +163,11 @@ def standup_report(conn, scope: "str | None", *, tz: str, rollover_hour: int) ->
         "yesterday": {"workday": yesterday,
                       "lines": _day_lines(conn, yesterday, tz=tz,
                                           rollover_hour=rollover_hour,
-                                          client_id=client_id)},
+                                          resolved=resolved)},
         "today": {"workday": today,
                   "lines": _day_lines(conn, today, tz=tz,
                                       rollover_hour=rollover_hour,
-                                      client_id=client_id)},
+                                      resolved=resolved)},
         "blockers": blockers,
     }
 
