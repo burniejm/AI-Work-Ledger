@@ -1485,3 +1485,91 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     for c in failed:
         print(f"worklog: failed to remove credential {c['reference']}: {c['detail']}", file=sys.stderr)
     return 0
+
+
+def _setup_githooks(sp: argparse.ArgumentParser) -> None:
+    # nargs='?' default 'status': Ruling 1's contract test parses every
+    # subcommand as `[name, "--format", "json"]` with no other args.
+    sp.add_argument("action", nargs="?", default="status",
+                    choices=("install", "remove", "capture", "status"))
+    sp.add_argument("--repo", help="repository path (default: current directory)")
+    sp.add_argument("--all-mapped", action="store_true",
+                    help="install/remove for every mapped repository")
+
+
+@register("githooks", setup=_setup_githooks)
+def _cmd_githooks(args: argparse.Namespace) -> int:
+    """`worklog githooks install|remove|capture|status` -- the opt-in git
+    post-commit capture (see githooks.py).
+
+    `capture` is what the hook itself runs: it must NEVER exit non-zero or
+    print to stdout/stderr noise that could confuse a porcelain -- a broken
+    ledger must never break `git commit`.
+    """
+    from work_ledger import githooks as githooks_mod
+
+    if args.action == "capture":
+        try:
+            conn = dbc.connect(hook_mode=True)
+            try:
+                githooks_mod.capture(conn, args.repo or os.getcwd(), hook_mode=True)
+            finally:
+                conn.close()
+        except BaseException:
+            try:
+                from work_ledger import paths as _paths
+                import traceback
+                with open(_paths.log_dir() / "githooks.log", "a") as f:
+                    f.write(f"{timeutil.utc_now_iso()} capture failed\n")
+                    traceback.print_exc(file=f)
+            except BaseException:
+                pass
+        return 0
+
+    conn = dbc.connect()
+    try:
+        migrations.ensure_current(conn)
+        if args.action == "status":
+            repos = githooks_mod.installed_repos(conn)
+            if args.format == "json":
+                print(json.dumps({"repos": repos}, indent=2))
+            else:
+                if not repos:
+                    print("(no git hooks installed)")
+                for repo in repos:
+                    print(repo)
+            return 0
+
+        targets = []
+        if args.all_mapped:
+            rows = conn.execute(
+                "SELECT root_path FROM repositories WHERE deleted_at IS NULL").fetchall()
+            targets = [r["root_path"] for r in rows]
+        elif args.repo:
+            targets = [args.repo]
+        else:
+            targets = [os.getcwd()]
+
+        results = []
+        for repo in targets:
+            try:
+                if args.action == "install":
+                    results.append(githooks_mod.install_hook(conn, repo))
+                else:
+                    results.append(githooks_mod.remove_hook(conn, repo))
+            except ValueError as exc:
+                print(f"worklog: {exc}", file=sys.stderr)
+                return 2
+        if args.format == "json":
+            print(json.dumps({"action": args.action, "results": results}, indent=2))
+        else:
+            for result in results:
+                verb = "installed" if args.action == "install" else "removed"
+                print(f"{verb}: {result['repo']}")
+        return 0
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":          # pragma: no cover -- exercised via subprocess
+    raise SystemExit(main())

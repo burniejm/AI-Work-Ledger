@@ -1116,6 +1116,20 @@ row up; day and grand totals sum the rounded rows. Pure query/rendering:
 no schema, no stored state. Activities without a work item are skipped
 (a timesheet row needs a ticket); they still appear in `worklog day`.
 
+## Git-side capture (added post-v1.0)
+
+`githooks.py` + `worklog githooks` + migration 006 (`human_commits`,
+schema 6): an opt-in per-repo `post-commit` hook line (marker-tagged,
+append-only into existing hooks, removal deletes only our line; installed
+repos tracked in `settings` so uninstall is exact). `githooks capture`
+reads HEAD through the read-only git allowlist, redacts, and writes one
+row with `session_active` = whether a live session covered the repo.
+`infer.ai_usage` counts `session_active=0` rows matching the ticket key as
+definitive human commits, sha-deduped against reconciled ones;
+`session_active=1` rows stay ambiguous (session-granularity rules own
+them). The capture CLI path always exits 0: a broken ledger must never
+break `git commit`. Wizard step `githooks` is strictly opt-in.
+
 ## 14. Requirements that cannot be implemented reliably (SPEC §23.4/§23.5)
 
 Each gap is stated as the spec requirement, the platform limitation, and the chosen degradation. None of these is papered over with prompt instructions.

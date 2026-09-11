@@ -118,13 +118,28 @@ def _delete_keychain_entry(reference: str) -> "tuple[bool, str]":
 def run(*, data: bool = False, delete_credentials: bool = False, confirmation: "str | None" = None) -> dict:
     """See module docstring for the confirmation/credential-deletion rules."""
     inv = inventory()
-    deleted = {"home": False, "credentials": []}
+    deleted = {"home": False, "credentials": [], "githooks": []}
 
     if not data:
         return {"inventory": inv, "deleted": deleted, "refused": None}
 
     if confirmation != CONFIRMATION_PHRASE:
         return {"inventory": inv, "deleted": deleted, "refused": "confirmation phrase not given"}
+
+    # Remove our marker line from every tracked repo's post-commit hook
+    # BEFORE the home directory (and with it the tracking list) goes away.
+    # Best-effort: a repo that has since been deleted must not stop the
+    # uninstall.
+    try:
+        from work_ledger import githooks
+        from work_ledger.db import connection as _dbc
+        conn = _dbc.connect()
+        try:
+            deleted["githooks"] = githooks.remove_all(conn)
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
     if delete_credentials:
         for reference in inv["credential_references"]:

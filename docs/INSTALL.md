@@ -52,6 +52,14 @@ abstraction has real implementations only for the macOS Keychain (via
 `env://` references with a printed warning during setup, but installation
 itself has not been verified there.
 
+## Optional: git-side capture
+
+`worklog githooks install --repo <path>` (or `--all-mapped`) records your
+manual commits at commit time via a `post-commit` hook line, sharpening
+the AI-usage score's human side. Strictly opt-in — the setup wizard's
+`githooks` step installs nothing unless you say yes. See README
+"Git-side capture".
+
 ## First run: `/worklog setup`
 
 Run the setup wizard once, from inside Claude Code (`/worklog setup`) or

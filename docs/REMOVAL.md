@@ -1,5 +1,11 @@
 # Removing Work Ledger
 
+> Uninstalling with data removal also deletes the marker-tagged
+> `post-commit` line Work Ledger added to any repository via
+> `worklog githooks install` (tracked exactly; other hook content is
+> untouched). To remove just the git hooks, run `worklog githooks remove
+> --all-mapped` at any time.
+
 Removal has two independent parts: the **plugin** (code and hooks) and
 **your data** (`~/.claude/work-ledger/`). Removing the plugin does not
 touch your data — that's deliberate, so an accidental or exploratory

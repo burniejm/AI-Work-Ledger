@@ -61,6 +61,7 @@ for the full flag list.
 | `worklog range <start> <end>` | A report spanning a range of workdays. |
 | `worklog status [scope]` | Recent status for a client, project, or work item (or everything). Ticket scopes include the AI-usage score (below). |
 | `worklog timesheet <client> --from <day> --to <day>` | Client-facing timesheet: one row per workday and ticket with merged minutes. `--format md\|csv\|json\|text`, `--round <minutes>` rounds rows up to billing increments, `--internal` adds AI-usage fields (excluded by default). |
+| `worklog githooks install\|remove\|status [--repo PATH \| --all-mapped]` | Opt-in git-side capture: a marker-tagged `post-commit` hook line that records human commits the moment they happen (see below). |
 | `worklog remaining [scope] [--state STATE]` | Open remaining items, optionally filtered by scope or state. |
 | `worklog blocked [scope]` | Remaining items currently marked blocked. |
 | `worklog stale [--days N]` | Work items with no activity in N days (default from config). |
@@ -171,6 +172,22 @@ minutes the reports use, day subtotals, and a grand total. It is
 **client-facing by default**: AI-usage fields never appear unless you pass
 `--internal`. `--round 15` rounds each row up to quarter-hour billing
 blocks, with totals summed from the rounded rows so the invoice adds up.
+
+## Git-side capture (opt-in)
+
+By default, human coding is only *inferred* from commits found at
+reconcile time. `worklog githooks install --repo <path>` (or
+`--all-mapped`, or the optional setup-wizard step) appends one
+marker-tagged line to that repo's `.git/hooks/post-commit` so commits are
+recorded the moment they happen — even with no Claude session open, which
+makes them **definitive human-side evidence** for the AI-usage score.
+
+Safety properties: it never clobbers an existing hook (one tagged line,
+appended; removal deletes only that line), the capture command always
+exits 0 so a ledger problem can never break `git commit`, commit subjects
+pass through the same redaction as everything else, and `worklog
+uninstall` removes every installed hook line. This is the only Work
+Ledger feature that touches your repositories, and it is opt-in per repo.
 
 ## Known limitations
 

@@ -95,6 +95,7 @@ STEPS: "tuple[str, ...]" = (
     "jira_identity",
     "git_identity",
     "repositories",
+    "githooks",
     "hooks",
     "end_to_end",
     "report",
@@ -927,6 +928,37 @@ def step_repositories(conn, state: State, answers: dict) -> dict:
     return _outcome("ok", detail, repositories=stored, newly_approved=newly_approved)
 
 
+def step_githooks(conn, state: State, answers: dict) -> dict:
+    """Opt-in git post-commit capture (DESIGN "Git-side capture").
+
+    Strictly opt-in: this is the one step that writes into the user's own
+    repositories (`.git/hooks/post-commit`), so nothing is installed unless
+    `answers["githooks"]["install"]` says so. Skipping is an `ok` outcome,
+    not a warning -- declining an optional feature is a healthy state.
+    """
+    from work_ledger import githooks
+
+    wanted = bool((answers.get("githooks") or {}).get("install"))
+    if not wanted:
+        return _outcome(
+            "ok", "git-side capture not requested (opt-in: worklog githooks install)",
+            installed=[])
+    rows = conn.execute(
+        "SELECT root_path FROM repositories"
+        " WHERE deleted_at IS NULL AND approved=1").fetchall()
+    installed, problems = [], []
+    for row in rows:
+        try:
+            result = githooks.install_hook(conn, row["root_path"])
+            installed.append(result["repo"])
+        except (ValueError, OSError) as exc:
+            problems.append(f"{row['root_path']}: {exc}")
+    if problems:
+        return _outcome("warn", "; ".join(problems), installed=installed)
+    return _outcome("ok", f"post-commit capture installed in {len(installed)} repository(ies)",
+                    installed=installed)
+
+
 def step_hooks(conn, state: State, answers: dict) -> dict:
     """Spec §12.1.8 -- install and validate capture hooks.
 
@@ -1039,6 +1071,7 @@ STEP_FUNCS = {
     "jira_identity": step_jira_identity,
     "git_identity": step_git_identity,
     "repositories": step_repositories,
+    "githooks": step_githooks,
     "hooks": step_hooks,
     "end_to_end": step_end_to_end,
     "report": step_report,

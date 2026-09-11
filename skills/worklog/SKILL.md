@@ -58,6 +58,7 @@ name on `PATH` is the only fallback.
 | "give me the status of Acme", "how is AB-76 going" | `worklog status Acme --format json` / `worklog status AB-76 --format json` |
 | "how much AI did we use on AB-76", "was AB-76 mostly AI-written" | `worklog status AB-76 --format json` — read `ai_usage` (score 1-5, confidence, reason); null score means "no evidence, unknown" |
 | "how long did I spend on AB-76", "time on Acme today" | `worklog status AB-76 --format json` — read `time` (minutes over the report window); or `worklog day <date> --format json` — read per-item and per-client `minutes`. Session-active time only: coding outside Claude sessions is not counted |
+| "capture my manual commits", "install the git hook in <repo>", "stop tracking commits in <repo>" | `worklog githooks install --repo <path>` / `worklog githooks remove --repo <path>` / `worklog githooks status --format json` (opt-in; touches that repo's .git/hooks/post-commit) |
 | "make a timesheet for Acme", "invoice lines for last week", "billing export" | `worklog timesheet Acme --from <day> --to <day>` (markdown table; `--format csv\|json\|text`, `--round 15` for billing blocks, `--internal` to include AI-usage fields — NEVER pass `--internal` for anything client-facing) |
 | "what remains on AB-76", "what's left across everything" | `worklog remaining AB-76 --format json` / `worklog remaining --format json` |
 | "what is blocked", "what is blocked across all clients" | `worklog blocked --format json` / `worklog blocked Acme --format json` |

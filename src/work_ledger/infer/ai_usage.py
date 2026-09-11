@@ -145,6 +145,7 @@ def gather_signals(conn, work_item_id: str) -> dict:
         " WHERE a.work_item_id=? AND a.deleted_at IS NULL", (work_item_id,))]
 
     ai_edits = ai_commits = human_commits = prompts = 0
+    counted_shas = set()
     for sid in session_ids:
         # The IN list is a SQL literal (not built from EDIT_TOOLS) so the
         # security suite's AST prover can verify this statement; the guard
@@ -164,9 +165,13 @@ def gather_signals(conn, work_item_id: str) -> dict:
                 ai_commits += 1
 
         if edits == 0:
-            human_commits += conn.execute(
-                "SELECT COUNT(*) AS n FROM source_events"
-                " WHERE session_id=? AND event_type='commit'", (sid,)).fetchone()["n"]
+            for row in conn.execute(
+                    "SELECT payload_json FROM source_events"
+                    " WHERE session_id=? AND event_type='commit'", (sid,)):
+                human_commits += 1
+                sha = (_json.loads(row["payload_json"]) or {}).get("sha")
+                if isinstance(sha, str) and sha:
+                    counted_shas.add(sha)
 
         for row in conn.execute(
                 "SELECT payload_json FROM source_events"
@@ -174,9 +179,46 @@ def gather_signals(conn, work_item_id: str) -> dict:
             if _stage_a._is_user_prompt(_json.loads(row["payload_json"])):
                 prompts += 1
 
+    human_commits += _hook_captured_human_commits(conn, work_item_id, counted_shas)
+
     return {"ai_edits": ai_edits, "ai_commits": ai_commits,
             "human_commits": human_commits, "prompts": prompts,
             "sessions": len(session_ids)}
+
+
+def _hook_captured_human_commits(conn, work_item_id: str, counted_shas: set) -> int:
+    """Commits captured by the git post-commit hook (githooks.py) that
+    belong to this ticket and are definitively human.
+
+    Definitive means `session_active=0` -- made with no live Claude session
+    covering the repo. A row whose sha reconcile already counted (the same
+    commit swept into a read-only session) is skipped, and a row made
+    during a live session stays ambiguous: the session-granularity rules
+    above already own that case.
+    """
+    import re as _re
+
+    row = conn.execute(
+        "SELECT external_key, display_id FROM work_items WHERE id=?",
+        (work_item_id,)).fetchone()
+    if row is None:
+        return 0
+    keys = [k for k in (row["external_key"], row["display_id"]) if k]
+    if not keys:
+        return 0
+    patterns = [_re.compile(r"\b" + _re.escape(key) + r"\b", _re.IGNORECASE)
+                for key in keys]
+
+    count = 0
+    for commit in conn.execute(
+            "SELECT sha, subject FROM human_commits WHERE session_active=0"):
+        if commit["sha"] in counted_shas:
+            continue
+        subject = commit["subject"] or ""
+        if any(pattern.search(subject) for pattern in patterns):
+            count += 1
+            counted_shas.add(commit["sha"])
+    return count
 
 
 def recompute_for_work_item(conn, work_item_id: str, *, hook_mode: bool = False) -> dict:

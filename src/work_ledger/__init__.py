@@ -1,2 +1,2 @@
-__version__ = "1.3.0"
-SCHEMA_VERSION = 5
+__version__ = "1.4.0"
+SCHEMA_VERSION = 6

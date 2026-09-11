@@ -54,6 +54,7 @@ EXPORT_TABLES = (
     ("sessions",                   "id"),
     ("source_events",              "id"),
     ("capture_checkpoints",        "id"),
+    ("human_commits",              "id"),
     ("activities",                 "id"),
     ("activity_evidence",          "id"),
     ("remaining_items",            "id"),
@@ -78,6 +79,7 @@ IMPORT_ORDER = (
     "sessions",                        # -> repositories
     "source_events",                   # -> sessions, repositories
     "capture_checkpoints",
+    "human_commits",                   # no FKs; hook-captured commits
     "activities",                      # -> sessions, clients, projects, work_items
     "activity_evidence",               # -> activities, source_events
     "remaining_items",                 # -> work_items, clients, projects
