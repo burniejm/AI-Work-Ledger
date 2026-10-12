@@ -18,6 +18,7 @@ automatic flip. Every user-derived string is HTML-escaped.
 import html as _html
 from datetime import date, timedelta
 
+from work_ledger import timeutil
 from work_ledger.query import daily as query_daily
 from work_ledger.query import status as query_status
 from work_ledger.query import timespent
@@ -58,12 +59,36 @@ def _strip_internal(node) -> None:
             _strip_internal(value)
 
 
+def _annotate_activity_times(base: dict, *, tz: str, rollover_hour: int) -> None:
+    """Tag each activity (in place) with its own `workday` and `minutes` --
+    the user's `stated_duration_minutes` if given, else its own started/ended
+    span, rounded. Distinct from a work item's aggregate `minutes`, which
+    merges intervals across all of that item's activities and stays the
+    authoritative per-item total; this is just per-activity display detail.
+    """
+    for client_node in base.get("clients") or []:
+        for project_node in client_node.get("projects") or []:
+            for node in project_node.get("work_items") or []:
+                for activity in node.get("activities") or []:
+                    started_at = activity.get("started_at")
+                    activity["workday"] = (
+                        timeutil.workday_of(started_at, tz, rollover_hour)
+                        if started_at else None)
+                    stated = activity.get("stated_duration_minutes")
+                    if stated:
+                        activity["minutes"] = stated
+                    elif started_at and activity.get("ended_at"):
+                        delta = (timeutil.parse_iso(activity["ended_at"])
+                                - timeutil.parse_iso(started_at))
+                        activity["minutes"] = max(0, round(delta.total_seconds() / 60))
+                    else:
+                        activity["minutes"] = 0
+
+
 def build_data(conn, scope: "str | None", *, period: str = "today",
                from_day: "str | None" = None, to_day: "str | None" = None,
                tz: str, rollover_hour: int, internal: bool = False) -> dict:
     """The report's full data set for a period or explicit workday range."""
-    from work_ledger import timeutil
-
     resolved = query_status.resolve_scope(conn, scope)
     if resolved["kind"] not in ("all", "client"):
         raise query_status.ScopeNotFound(
@@ -82,6 +107,7 @@ def build_data(conn, scope: "str | None", *, period: str = "today",
     base = query_daily.range_report(conn, start, end, tz=tz,
                                     rollover_hour=rollover_hour,
                                     client_id=client_id)
+    _annotate_activity_times(base, tz=tz, rollover_hour=rollover_hour)
 
     days = []
     for workday in _workdays(start, end):
@@ -167,14 +193,15 @@ def _bar_geometry(days: "list[dict]", *, width: int, height: int) -> "list[dict]
 
 
 def _svg_chart(days: "list[dict]") -> str:
-    width, height, label_band = 560, 120, 18
+    width, height, label_band, top_margin = 560, 120, 18, 14
     bars = _bar_geometry(days, width=width, height=height)
     if not bars or all(b["minutes"] == 0 for b in bars):
         return ""
-    parts = [f'<svg class="chart" viewBox="0 0 {width} {height + label_band}" '
+    baseline = height + top_margin
+    parts = [f'<svg class="chart" viewBox="0 0 {width} {baseline + label_band}" '
              f'role="img" aria-label="Minutes per day" '
              f'preserveAspectRatio="xMinYMax meet">']
-    parts.append(f'<line x1="0" y1="{height}" x2="{width}" y2="{height}" '
+    parts.append(f'<line x1="0" y1="{baseline}" x2="{width}" y2="{baseline}" '
                  f'class="axis"/>')
     show_every = max(1, len(bars) // 8)
     for index, bar in enumerate(bars):
@@ -182,16 +209,23 @@ def _svg_chart(days: "list[dict]") -> str:
             # Rounded data-end anchored to the baseline: round only the top.
             radius = min(4, bar["w"] / 2, bar["h"])
             parts.append(
-                f'<path class="bar" d="M{bar["x"]},{height} '
+                f'<path class="bar" d="M{bar["x"]},{baseline} '
                 f'v-{max(bar["h"] - radius, 0):.1f} '
                 f'q0,-{radius} {radius},-{radius} h{bar["w"] - 2 * radius} '
                 f'q{radius},0 {radius},{radius} v{max(bar["h"] - radius, 0):.1f} z">'
                 f'<title>{_e(bar["workday"])}: '
                 f'{_e(timespent.format_minutes(bar["minutes"]))}</title></path>')
+            # Visible value label above the bar -- the <title> above is a
+            # hover-only tooltip, invisible in a static/printed view.
+            label_y = max(bar["y"] + top_margin - 4, 9)
+            parts.append(
+                f'<text class="value" x="{bar["x"] + bar["w"] / 2}" y="{label_y}" '
+                f'text-anchor="middle">'
+                f'{_e(timespent.format_minutes(bar["minutes"]))}</text>')
         if index % show_every == 0:
             parts.append(
                 f'<text class="tick" x="{bar["x"] + bar["w"] / 2}" '
-                f'y="{height + 13}" text-anchor="middle">'
+                f'y="{baseline + 13}" text-anchor="middle">'
                 f'{_e(bar["workday"][5:])}</text>')
     parts.append("</svg>")
     return "".join(parts)
@@ -200,8 +234,9 @@ def _svg_chart(days: "list[dict]") -> str:
 _STYLE = """
 :root { color-scheme: light dark; }
 body {
-  margin: 0; padding: 24px; background: #fcfcfb; color: #0b0b0b;
+  margin: 0 auto; padding: 24px; background: #fcfcfb; color: #0b0b0b;
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  max-width: 75%; box-sizing: border-box;
 }
 .muted { color: #52514e; }
 h1 { font-size: 20px; margin: 0 0 2px; }
@@ -212,14 +247,20 @@ h2 { font-size: 16px; margin: 28px 0 8px; }
 }
 .tile .value { font-size: 22px; font-weight: 600; }
 .tile .label { font-size: 12px; color: #52514e; }
-.chart { max-width: 560px; width: 100%; display: block; margin: 8px 0 4px; }
+.chart { max-width: 100%; width: 100%; display: block; margin: 8px 0 4px; }
 .chart .bar { fill: #2a78d6; }
 .chart .axis { stroke: #d8d7d2; stroke-width: 1; }
 .chart .tick { fill: #52514e; font-size: 9px; }
-table { border-collapse: collapse; width: 100%; max-width: 900px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e5e4e0; }
+.chart .value { fill: #0b0b0b; font-size: 10px; font-weight: 600; }
+table { border-collapse: collapse; width: 100%; max-width: 100%; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e5e4e0; vertical-align: top; }
 th { font-size: 12px; color: #52514e; font-weight: 600; }
 td.num, th.num { text-align: right; white-space: nowrap; }
+td .summaries { margin: 0; padding-left: 16px; }
+td .summaries li { margin: 3px 0; }
+td .summaries li:first-child { margin-top: 0; }
+td .summaries li:last-child { margin-bottom: 0; }
+td .summaries .when { color: #52514e; font-size: 12px; white-space: nowrap; }
 .badge {
   display: inline-block; padding: 1px 7px; border-radius: 9px;
   background: #f0efec; font-size: 12px;
@@ -228,12 +269,13 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 footer { margin-top: 32px; font-size: 12px; color: #52514e; }
 @media (prefers-color-scheme: dark) {
   body { background: #1a1a19; color: #ffffff; }
-  .muted, .tile .label, th, .blockers .why, footer { color: #c3c2b7; }
+  .muted, .tile .label, th, .blockers .why, footer, td .summaries .when { color: #c3c2b7; }
   .tile, .badge { background: #262624; }
   th, td { border-bottom-color: #33322f; }
   .chart .bar { fill: #3987e5; }
   .chart .axis { stroke: #3a3936; }
   .chart .tick { fill: #c3c2b7; }
+  .chart .value { fill: #ffffff; }
 }
 """
 
@@ -293,12 +335,28 @@ def render_html(data: dict) -> str:
         rows = [header]
         for project_node in client_node.get("projects") or []:
             for node in project_node.get("work_items") or []:
-                from work_ledger.query import summaries as query_summaries
-                summary = "; ".join(query_summaries.dedupe(
-                    a.get("summary") for a in node.get("activities") or [])[:5])
+                # A list, not a semicolon-joined blob: several activities'
+                # summaries read as one unreadable run-on line joined that way.
+                # Kept first-seen by summary text, same as summaries.dedupe,
+                # but keeping the activity attached so its own date/time can
+                # be shown alongside -- not just the work item's aggregate.
+                seen_summaries = set()
+                picked_activities = []
+                for activity in node.get("activities") or []:
+                    text = activity.get("summary")
+                    if text and text not in seen_summaries:
+                        seen_summaries.add(text)
+                        picked_activities.append(activity)
+                    if len(picked_activities) >= 5:
+                        break
+                summary_html = "<ul class=\"summaries\">" + "".join(
+                    f'<li><span class="when">{_e(a.get("workday"))} · '
+                    f'{_e(timespent.format_minutes(a.get("minutes") or 0))}</span> '
+                    f'{_e(a.get("summary"))}</li>'
+                    for a in picked_activities) + "</ul>"
                 cells = (f"<tr><td>{_e(node.get('work_item'))}</td>"
                          f"<td>{_e(node.get('title'))}</td>"
-                         f"<td>{_e(summary)}</td>")
+                         f"<td>{summary_html}</td>")
                 if internal:
                     ai_usage = node.get("ai_usage")
                     badge = (f'<span class="badge">{_e(ai_usage["score"])}/5</span>'

@@ -177,6 +177,7 @@ class TestSetup(unittest.TestCase):
             "Workday rollover hour": "3",
             "Development roots": os.path.join(self.tmp.name, "dev"),
             "Additional git author emails": "alt@example.com",
+            "Client for": "",
             "Jira setup": "rest",
             "Connection name": "j",
             "Jira base URL": "http://127.0.0.1:9",
@@ -204,6 +205,70 @@ class TestSetup(unittest.TestCase):
             "SELECT value FROM user_identities WHERE kind='git'")}
         self.assertIn("alt@example.com", vals)
         self.assertIn("dev@example.com", vals)
+
+    # ---- repo_mapping step -----------------------------------------------
+
+    def test_repo_mapping_step_creates_client_project_and_mapping(self):
+        # Keyed by the realpath: discovery canonicalizes root_path via git,
+        # which on macOS resolves the /var -> /private/var symlink, so a raw
+        # `self.repo` key here would never match the stored repository row.
+        real_repo = os.path.realpath(self.repo)
+        answers = {**self.answers, "repo_mappings": {real_repo: {"client": "Acme", "project": "Replay"}}}
+        sw.run(self.conn, answers=answers)
+        row = self.conn.execute(
+            "SELECT rm.confidence, rm.source, c.name AS client, p.name AS project "
+            "FROM repository_mappings rm "
+            "JOIN repositories r ON r.id = rm.repository_id "
+            "JOIN clients c ON c.id = rm.client_id "
+            "JOIN projects p ON p.id = rm.project_id "
+            "WHERE r.root_path = ?", (real_repo,),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["client"], "Acme")
+        self.assertEqual(row["project"], "Replay")
+        self.assertEqual(row["confidence"], "high")
+        self.assertEqual(row["source"], "setup")
+
+    def test_repo_mapping_step_skips_a_blank_client(self):
+        answers = {**self.answers, "repo_mappings": {self.repo: {"client": "", "project": ""}}}
+        sw.run(self.conn, answers=answers)
+        count = self.conn.execute("SELECT count(*) FROM repository_mappings").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_repo_mapping_step_leaves_repo_unmapped_when_no_answer_given(self):
+        sw.run(self.conn, answers=self.answers)
+        count = self.conn.execute("SELECT count(*) FROM repository_mappings").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_repo_mapping_is_interactive_per_discovered_repo(self):
+        asked = []
+        def prompt(question):
+            asked.append(question)
+            if "Client for" in question:
+                return "Acme"
+            if "Project for" in question:
+                return "Replay"
+            return ""
+        sw.run(self.conn, answers=None, prompt=prompt)
+        self.assertTrue(any("Client for" in q and os.path.basename(self.repo) in q for q in asked))
+        row = self.conn.execute(
+            "SELECT c.name FROM repository_mappings rm JOIN clients c ON c.id = rm.client_id"
+        ).fetchone()
+        self.assertEqual(row["name"], "Acme")
+
+    def test_repo_mapping_rerun_defaults_to_the_previous_answer(self):
+        real_repo = os.path.realpath(self.repo)
+        sw.run(self.conn, answers={**self.answers,
+                                    "repo_mappings": {real_repo: {"client": "Acme", "project": "Replay"}}})
+        asked = []
+        def prompt(question):
+            asked.append(question)
+            return ""  # accept every default
+        sw.run(self.conn, answers=None, prompt=prompt, only="repo_mapping")
+        client_question = next(q for q in asked if "Client for" in q)
+        self.assertIn("Acme", client_question)
+        count = self.conn.execute("SELECT count(*) FROM repository_mappings").fetchone()[0]
+        self.assertEqual(count, 1)
 
     def test_self_test_source_event_is_bounded_to_one_per_day(self):
         sw.run(self.conn, answers=self.answers)

@@ -129,6 +129,50 @@ class TestRenderHtml(_ReportCase):
         by_day = {b["workday"]: b for b in bars}
         self.assertAlmostEqual(by_day[yesterday]["h"] * 2, by_day[self.today]["h"], delta=1)
 
+    def test_chart_bars_show_a_visible_value_not_only_a_hover_tooltip(self):
+        from datetime import date
+        yesterday = (date.fromisoformat(self.today) - timedelta(days=1)).isoformat()
+        self._activity_on(yesterday, minutes=30)
+        self._activity_on(self.today, minutes=60)
+        data = self._data(period="week")
+        if len(data["days"]) < 2:
+            self.skipTest("week window too small today for a two-bar assertion")
+        html = htmlreport.render_html(data)
+        # "1h" must appear as visible chart text, not merely inside the
+        # <title> hover tooltip -- a static/printed view has no hover.
+        self.assertRegex(html, r'<text class="value"[^>]*>1h</text>')
+
+    def test_multiple_activity_summaries_render_as_separate_list_items(self):
+        self._activity_on(self.today, summary="Fixed the retry loop")
+        self._activity_on(self.today, summary="Added a regression test")
+        html = htmlreport.render_html(self._data())
+        self.assertEqual(html.count("<li>"), 2)
+        self.assertIn("Fixed the retry loop</li>", html)
+        self.assertIn("Added a regression test</li>", html)
+        self.assertNotIn("Fixed the retry loop; Added a regression test", html)
+
+    def test_each_activity_shows_its_own_date_and_time(self):
+        self._activity_on(self.today, summary="Fixed the retry loop", minutes=45)
+        html = htmlreport.render_html(self._data())
+        self.assertRegex(
+            html, rf'<span class="when">{self.today} · 45m</span> Fixed the retry loop')
+
+    def test_activity_minutes_use_the_stated_duration_when_given(self):
+        self._activity_on(self.today, summary="Fixed the retry loop", minutes=45)
+        self.conn.execute(
+            "UPDATE activities SET stated_duration_minutes=90 WHERE summary='Fixed the retry loop'")
+        html = htmlreport.render_html(self._data())
+        self.assertIn('· 1h 30m</span> Fixed the retry loop', html)
+
+    def test_table_cells_align_to_the_top_not_centered_against_the_summary_list(self):
+        html = htmlreport.render_html(self._data())
+        self.assertIn("vertical-align: top", html)
+
+    def test_page_is_centered_and_uses_most_of_the_viewport(self):
+        html = htmlreport.render_html(self._data())
+        self.assertIn("max-width: 75%", html)
+        self.assertIn("margin: 0 auto", html)
+
     def test_ai_column_appears_only_internal(self):
         self.conn.execute(
             "UPDATE work_items SET ai_usage_score=4, ai_usage_confidence='high'"

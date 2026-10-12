@@ -324,6 +324,81 @@ class TestCliBackup(unittest.TestCase):
         self.assertEqual(rc, 0, out.getvalue())
 
 
+class TestCliRepos(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old_home = os.environ.get("WORK_LEDGER_HOME")
+        os.environ["WORK_LEDGER_HOME"] = self.tmp.name
+
+        conn = dbc.connect()
+        m.apply_all(conn)
+        self.unmapped = e.upsert_repository(conn, "/Users/x/scout")
+        self.mapped = e.upsert_repository(conn, "/Users/x/replay", name="replay")
+        cl = e.upsert_client(conn, "Acme")
+        pr = e.upsert_project(conn, cl, "Replay")
+        e.map_repository(conn, self.mapped, client_id=cl, project_id=pr,
+                         confidence="high", source="setup")
+        conn.close()
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("WORK_LEDGER_HOME", None)
+        else:
+            os.environ["WORK_LEDGER_HOME"] = self._old_home
+        self.tmp.cleanup()
+
+    def test_list_shows_mapped_and_unmapped_repositories(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.main(["repos", "--format", "json"])
+        self.assertEqual(rc, 0, buf.getvalue())
+        items = {r["root_path"]: r for r in json.loads(buf.getvalue())}
+        self.assertEqual(items["/Users/x/replay"]["client"], "Acme")
+        self.assertEqual(items["/Users/x/replay"]["project"], "Replay")
+        self.assertIsNone(items["/Users/x/scout"]["client"])
+
+    def test_map_creates_client_project_and_mapping(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.main(["repos", "map", "--repo", "/Users/x/scout",
+                          "--client", "Globex", "--project", "Portal", "--format", "json"])
+        self.assertEqual(rc, 0, buf.getvalue())
+
+        conn = dbc.connect()
+        row = conn.execute(
+            "SELECT rm.confidence, rm.source, c.name AS client, p.name AS project "
+            "FROM repository_mappings rm "
+            "JOIN clients c ON c.id = rm.client_id JOIN projects p ON p.id = rm.project_id "
+            "WHERE rm.repository_id=?", (self.unmapped,),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row["client"], "Globex")
+        self.assertEqual(row["project"], "Portal")
+        self.assertEqual(row["confidence"], "high")
+        self.assertEqual(row["source"], "manual")
+
+    def test_map_can_resolve_a_repo_by_name(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.main(["repos", "map", "--repo", "replay",
+                          "--client", "Acme", "--format", "json"])
+        self.assertEqual(rc, 0, buf.getvalue())
+
+    def test_map_requires_repo_and_client(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = cli.main(["repos", "map", "--client", "Acme"])
+        self.assertEqual(rc, 2)
+        self.assertIn("--repo", err.getvalue())
+
+    def test_map_unknown_repo_is_reported_not_raised(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = cli.main(["repos", "map", "--repo", "/nope", "--client", "Acme"])
+        self.assertEqual(rc, 2)
+        self.assertIn("/nope", err.getvalue())
+
+
 class TestCliConnectionsRepair(unittest.TestCase):
     """`worklog connections repair <name> --credential-reference …` --
     the documented recovery path (spec §12); Important #1 requires this

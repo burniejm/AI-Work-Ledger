@@ -1585,6 +1585,103 @@ def _cmd_githooks(args: argparse.Namespace) -> int:
 
 
 
+def _resolve_repository(conn, ident: str):
+    row = conn.execute(
+        "SELECT * FROM repositories WHERE root_path=? AND deleted_at IS NULL", (ident,)
+    ).fetchone()
+    if row is not None:
+        return row
+    rows = conn.execute(
+        "SELECT * FROM repositories WHERE deleted_at IS NULL AND lower(name)=lower(?)", (ident,)
+    ).fetchall()
+    if len(rows) == 1:
+        return rows[0]
+    if len(rows) > 1:
+        raise ValueError(f"multiple repositories named {ident!r}; pass the full root path instead")
+    raise ValueError(f"no repository found named or at {ident!r}")
+
+
+def _repo_to_dict(conn, row) -> dict:
+    mapping = conn.execute(
+        "SELECT c.name AS client, p.name AS project, rm.confidence FROM repository_mappings rm "
+        "LEFT JOIN clients c ON c.id = rm.client_id LEFT JOIN projects p ON p.id = rm.project_id "
+        "WHERE rm.repository_id=? AND rm.path_prefix='' AND rm.deleted_at IS NULL",
+        (row["id"],),
+    ).fetchone()
+    return {
+        "id": row["id"],
+        "root_path": row["root_path"],
+        "name": row["name"],
+        "approved": bool(row["approved"]),
+        "client": mapping["client"] if mapping else None,
+        "project": mapping["project"] if mapping else None,
+        "confidence": mapping["confidence"] if mapping else None,
+    }
+
+
+def _setup_repos(sp: argparse.ArgumentParser) -> None:
+    # nargs='?' default 'list': Ruling 1's contract test parses every
+    # subcommand as `[name, "--format", "json"]` with no other args.
+    sp.add_argument("action", nargs="?", default="list", choices=("list", "map"))
+    sp.add_argument("--repo", help="repository name or root path (required for map)")
+    sp.add_argument("--client", help="client name (required for map)")
+    sp.add_argument("--project", help="project name (optional for map)")
+    sp.add_argument("--path-prefix", default="",
+                    help="subpath within the repo this mapping applies to (default: the whole repo)")
+
+
+@register("repos", setup=_setup_repos)
+def _cmd_repos(args: argparse.Namespace) -> int:
+    """`worklog repos list|map` -- assign a discovered repository to a
+    client/project so its activity stops falling into Unassigned/Unassigned
+    (see `entities.map_repository` / `resolve_scope_for_path`)."""
+    conn = dbc.connect()
+    try:
+        if args.action == "list":
+            rows = conn.execute(
+                "SELECT * FROM repositories WHERE deleted_at IS NULL ORDER BY root_path"
+            ).fetchall()
+            items = [_repo_to_dict(conn, r) for r in rows]
+            if args.format == "json":
+                print(json.dumps(items, indent=2))
+            else:
+                if not items:
+                    print("(no repositories discovered)")
+                for it in items:
+                    scope = f"{it['client']}/{it['project']}" if it["client"] else "(unmapped)"
+                    print(f"{it['root_path']}  {scope}")
+            return 0
+
+        # action == "map"
+        if not args.repo or not args.client:
+            print("worklog: repos map requires --repo and --client", file=sys.stderr)
+            return 2
+        try:
+            repo_row = _resolve_repository(conn, args.repo)
+        except ValueError as exc:
+            print(f"worklog: {exc}", file=sys.stderr)
+            return 2
+
+        client_id = entities.get_or_create_client(conn, args.client)
+        project_id = entities.upsert_project(conn, client_id, args.project) if args.project else None
+        mapping_id = entities.map_repository(
+            conn, repo_row["id"], client_id=client_id, project_id=project_id,
+            path_prefix=args.path_prefix or "", confidence="high", source="manual",
+        )
+        result = {
+            "mapping_id": mapping_id, "repository": repo_row["root_path"],
+            "client": args.client, "project": args.project, "path_prefix": args.path_prefix or "",
+        }
+        if args.format == "json":
+            print(json.dumps(result, indent=2))
+        else:
+            scope = f"{args.client}/{args.project}" if args.project else args.client
+            print(f"mapped {repo_row['root_path']} -> {scope}")
+        return 0
+    finally:
+        conn.close()
+
+
 def _setup_week(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("scope", nargs="?")
     sp.add_argument("--ending", default="today",

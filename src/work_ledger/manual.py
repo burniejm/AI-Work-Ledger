@@ -260,10 +260,7 @@ def resolve_ticket_work_item(conn, ticket_key: str, *, client_id=None,
 def _resolve_client_id(conn, name: "str | None") -> "str | None":
     if name is None:
         return None
-    existing = entities.get_client_by_name(conn, name)
-    if existing is not None:
-        return existing["id"]
-    return entities.upsert_client(conn, name)
+    return entities.get_or_create_client(conn, name)
 
 
 def record(conn, statement: ManualStatement, *, occurred_at: "str | None" = None) -> str:

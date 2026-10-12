@@ -39,7 +39,7 @@ import contextlib
 import json
 import sqlite3
 
-from work_ledger import entities, ids, timeutil
+from work_ledger import entities, ids, timeutil, work_items
 from work_ledger.db import connection
 from work_ledger.infer import stage_a as _stage_a
 
@@ -157,6 +157,20 @@ _KeyAttribution = collections.namedtuple(
 )
 
 
+def _local_item_title(conn: sqlite3.Connection, client_id, project_id) -> str:
+    """Scope label for a correction's auto-created local item: the project's
+    name if it resolved one, else the client's. Deterministic per scope, so
+    repeated corrections into the same client/project converge on the same
+    item via `work_items.find_reusable_local`'s title match rather than
+    spawning a new one each time."""
+    if project_id is not None:
+        row = conn.execute("SELECT name FROM projects WHERE id=?", (project_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT name FROM clients WHERE id=?", (client_id,)).fetchone()
+    scope = row["name"] if row is not None else "work"
+    return f"{scope}: general work"
+
+
 def move_activity(conn: sqlite3.Connection, activity_id: str, *, work_item_id=None, client_id=None,
                    project_id=None, reason: str, learn_alias: bool = False) -> str:
     """Re-attribute an activity's work item/client/project, with audit.
@@ -182,7 +196,32 @@ def move_activity(conn: sqlite3.Connection, activity_id: str, *, work_item_id=No
     ordinary `activities.idempotency_key` correction in the same group
     (`undo()` inverts it like any other field, since it is now in
     `CORRECTABLE_FIELDS`).
+
+    Auto-attaching a local item: a client/project-only correction on an
+    activity that has no work item (`work_item_id is None` on both the call
+    and the row) would otherwise leave it in a permanently title-less
+    "Unassigned" bucket forever -- nothing else ever revisits it. So when the
+    correction's resolved client/project isn't entirely null, this gets or
+    creates a local item for that scope (`work_items.get_or_create_local`,
+    the same call Stage A makes at capture time) and uses it as the move
+    target, exactly as if `--to-work-item` had named it. This has to happen
+    *before* `group()`/the transaction below: `get_or_create_local` opens its
+    own `connection.transaction`, which cannot nest inside another.
     """
+    if work_item_id is None:
+        pre_row = conn.execute(
+            "SELECT work_item_id, client_id, project_id FROM activities WHERE id=?", (activity_id,)
+        ).fetchone()
+        if pre_row is None:
+            raise ValueError(f"no such activity: {activity_id!r}")
+        if pre_row["work_item_id"] is None:
+            final_client_id = client_id if client_id is not None else pre_row["client_id"]
+            final_project_id = project_id if project_id is not None else pre_row["project_id"]
+            if final_client_id is not None or final_project_id is not None:
+                work_item_id, _created = work_items.get_or_create_local(
+                    conn, _local_item_title(conn, final_client_id, final_project_id),
+                    client_id=final_client_id, project_id=final_project_id)
+
     with group(conn, actor="user", reason=reason) as g:
         with connection.transaction(conn):
             row = conn.execute(

@@ -77,6 +77,17 @@ class TestEntities(unittest.TestCase):
         self.assertEqual(row["remotes_json"], '["origin"]')
         self.assertEqual(row["approved"], 1)
 
+    def test_get_or_create_client_creates_when_missing(self):
+        cid = e.get_or_create_client(self.conn, "Acme")
+        row = self.conn.execute("SELECT name FROM clients WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(row["name"], "Acme")
+
+    def test_get_or_create_client_reuses_existing_by_alias(self):
+        cid = e.upsert_client(self.conn, "Portal")
+        e.add_alias(self.conn, "client", "TG", "client", cid, source="correction")
+        self.assertEqual(e.get_or_create_client(self.conn, "TG"), cid)
+        self.assertEqual(self.conn.execute("SELECT count(*) FROM clients").fetchone()[0], 1)
+
     def test_device_name_config_overrides_the_hostname(self):
         # Ruling 29: config `device_name` is consumed here and nowhere else.
         import os, tempfile as tf

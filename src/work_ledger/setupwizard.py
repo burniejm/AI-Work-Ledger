@@ -81,6 +81,7 @@ __all__ = [
     "step_jira_identity",
     "step_git_identity",
     "step_repositories",
+    "step_repo_mapping",
     "step_hooks",
     "step_end_to_end",
     "step_report",
@@ -95,6 +96,7 @@ STEPS: "tuple[str, ...]" = (
     "jira_identity",
     "git_identity",
     "repositories",
+    "repo_mapping",
     "githooks",
     "hooks",
     "end_to_end",
@@ -301,10 +303,11 @@ _STEP_QUESTIONS = {
     "jira_detect": ("jira",),
     "git_identity": ("roots", "git_emails"),
     "repositories": ("roots",),
+    "repo_mapping": ("repo_mappings",),
 }
 
 
-def _interactive_answers(prompt_fn, previous: dict, wanted: "set[str]") -> dict:
+def _interactive_answers(prompt_fn, previous: dict, wanted: "set[str]", state: "State") -> dict:
     cfg = config.load()
     answers = dict(previous)
 
@@ -321,6 +324,25 @@ def _interactive_answers(prompt_fn, previous: dict, wanted: "set[str]") -> dict:
             prompt_fn, "Development roots to search for repositories (comma separated)",
             ", ".join(previous.get("dev_roots") or []))
         answers["dev_roots"] = _csv(roots)
+
+    if "repo_mappings" in wanted:
+        # `answers` already carries `dev_roots` here -- either just asked
+        # above (full run) or copied straight from `previous` (a standalone
+        # `--only repo_mapping` rerun, where "roots" is not itself wanted).
+        prev_mappings = previous.get("repo_mappings") or {}
+        mappings = {}
+        for repo in _discovered(state, answers):
+            root = repo["root_path"]
+            prev = prev_mappings.get(root) or {}
+            client = _ask(
+                prompt_fn, f"Client for {repo['name']} ({root})", prev.get("client") or "")
+            project = ""
+            if client:
+                project = _ask(
+                    prompt_fn, f"Project for {repo['name']} (blank for none)",
+                    prev.get("project") or "")
+            mappings[root] = {"client": client, "project": project}
+        answers["repo_mappings"] = mappings
 
     if "git_emails" in wanted:
         # Spec §12.5: "additional author emails belonging to the user". Only
@@ -382,7 +404,7 @@ def _resolve_answers(answers, state: State, prompt_fn, steps: "tuple[str, ...]")
     if answers is None:
         wanted = {group for step in steps
                   for group in _STEP_QUESTIONS.get(step, ())}
-        resolved = _interactive_answers(prompt_fn, previous, wanted)
+        resolved = _interactive_answers(prompt_fn, previous, wanted, state)
     else:
         resolved = {**previous, **dict(answers)}
         if "jira" in previous and "jira" in (answers or {}):
@@ -928,6 +950,49 @@ def step_repositories(conn, state: State, answers: dict) -> dict:
     return _outcome("ok", detail, repositories=stored, newly_approved=newly_approved)
 
 
+def step_repo_mapping(conn, state: State, answers: dict) -> dict:
+    """Assign each discovered repository to a client/project via
+    `entities.map_repository`, so activity from it stops collapsing into
+    Unassigned/Unassigned (`resolve_scope_for_path` needs a live mapping,
+    not merely an approved repository -- see its docstring).
+
+    `answers["repo_mappings"]` is `{root_path: {"client": ..., "project": ...}}`,
+    built by `_interactive_answers` (interactive) or supplied directly
+    (`worklog setup --answers`/tests). A blank `client` leaves that repo
+    unmapped -- a deliberate "not yet, handled later" choice, not an error.
+    """
+    mappings = answers.get("repo_mappings") or {}
+    mapped, skipped = [], []
+    for root_path, choice in mappings.items():
+        client_name = (choice or {}).get("client") or ""
+        if not client_name.strip():
+            skipped.append(root_path)
+            continue
+        row = conn.execute(
+            "SELECT id FROM repositories WHERE root_path=? AND deleted_at IS NULL",
+            (root_path,),
+        ).fetchone()
+        if row is None:  # repo answered about but not (yet) discovered/stored
+            skipped.append(root_path)
+            continue
+        client_id = entities.get_or_create_client(conn, client_name)
+        project_name = (choice or {}).get("project") or ""
+        project_id = entities.upsert_project(conn, client_id, project_name) if project_name.strip() else None
+        entities.map_repository(
+            conn, row["id"], client_id=client_id, project_id=project_id,
+            confidence="high", source="setup",
+        )
+        mapped.append(root_path)
+
+    if not mappings:
+        return _outcome("warn", "no repository mapping answers collected",
+                        mapped=[], skipped=[])
+    detail = f"{len(mapped)} repository(ies) mapped"
+    if skipped:
+        detail += f", {len(skipped)} left unmapped"
+    return _outcome("ok", detail, mapped=mapped, skipped=skipped)
+
+
 def step_githooks(conn, state: State, answers: dict) -> dict:
     """Opt-in git post-commit capture (DESIGN "Git-side capture").
 
@@ -1071,6 +1136,7 @@ STEP_FUNCS = {
     "jira_identity": step_jira_identity,
     "git_identity": step_git_identity,
     "repositories": step_repositories,
+    "repo_mapping": step_repo_mapping,
     "githooks": step_githooks,
     "hooks": step_hooks,
     "end_to_end": step_end_to_end,

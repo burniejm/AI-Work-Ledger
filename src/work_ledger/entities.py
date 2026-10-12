@@ -138,6 +138,15 @@ def upsert_project(conn, client_id: str, name: str) -> str:
         return project_id
 
 
+def get_or_create_client(conn, name: str) -> str:
+    """Resolve `name` to a client id via `get_client_by_name`, creating one
+    (via `upsert_client`) only if no match exists."""
+    existing = get_client_by_name(conn, name)
+    if existing is not None:
+        return existing["id"]
+    return upsert_client(conn, name)
+
+
 def get_client_by_name(conn, name: str):
     """Resolve a client by name: through `aliases` first, then by slug."""
     alias = resolve_alias(conn, "client", name)

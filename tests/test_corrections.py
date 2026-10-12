@@ -117,6 +117,82 @@ class TestCorrections(unittest.TestCase):
         )
 
 
+class TestMoveActivityAutoLocalItem(unittest.TestCase):
+    """A client/project-only correction on a work-item-less activity must
+    not leave it permanently title-less in "Unassigned" -- it should get a
+    local work item, the same way Stage A would at capture time."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = dbc.connect(os.path.join(self.tmp.name, "t.sqlite"))
+        m.apply_all(self.conn)
+        self.cl = e.upsert_client(self.conn, "Acme")
+        self.pr = e.upsert_project(self.conn, self.cl, "Replay")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _unattributed_activity(self, summary="Ran the setup script"):
+        now = timeutil.utc_now_iso()
+        aid = ids.new_id()
+        self.conn.execute(
+            "INSERT INTO activities(id,work_item_id,client_id,project_id,kind,summary,started_at,"
+            "confidence,source,idempotency_key,source_hash,origin_device_id,created_at,updated_at)"
+            " VALUES (?,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?)",
+            (aid, "test", summary, now, "medium", "stage_a", aid, "h", "dev1", now, now))
+        return aid
+
+    def _work_item_of(self, activity_id):
+        return self.conn.execute(
+            "SELECT work_item_id FROM activities WHERE id=?", (activity_id,)).fetchone()[0]
+
+    def test_client_and_project_correction_creates_a_local_item(self):
+        act = self._unattributed_activity()
+        c.move_activity(self.conn, act, client_id=self.cl, project_id=self.pr, reason="fix scope")
+        wid = self._work_item_of(act)
+        self.assertIsNotNone(wid)
+        row = self.conn.execute(
+            "SELECT kind, client_id, project_id, title FROM work_items WHERE id=?", (wid,)).fetchone()
+        self.assertEqual(row["kind"], "local")
+        self.assertEqual(row["client_id"], self.cl)
+        self.assertEqual(row["project_id"], self.pr)
+        self.assertIn("Replay", row["title"])
+
+    def test_client_only_correction_creates_a_local_item_scoped_to_the_client(self):
+        act = self._unattributed_activity()
+        c.move_activity(self.conn, act, client_id=self.cl, reason="fix scope")
+        wid = self._work_item_of(act)
+        row = self.conn.execute(
+            "SELECT project_id, title FROM work_items WHERE id=?", (wid,)).fetchone()
+        self.assertIsNone(row["project_id"])
+        self.assertIn("Acme", row["title"])
+
+    def test_repeated_corrections_into_the_same_scope_reuse_one_local_item(self):
+        act1 = self._unattributed_activity("Ran the setup script")
+        act2 = self._unattributed_activity("Fixed a bug")
+        c.move_activity(self.conn, act1, client_id=self.cl, project_id=self.pr, reason="fix scope")
+        c.move_activity(self.conn, act2, client_id=self.cl, project_id=self.pr, reason="fix scope")
+        self.assertEqual(self._work_item_of(act1), self._work_item_of(act2))
+
+    def test_activity_that_already_has_a_work_item_is_not_given_a_new_one(self):
+        item = wi.upsert_external(self.conn, "conn1", "AB-76", title="Upload recovery")
+        now = timeutil.utc_now_iso()
+        act = ids.new_id()
+        self.conn.execute(
+            "INSERT INTO activities(id,work_item_id,client_id,project_id,kind,summary,started_at,"
+            "confidence,source,idempotency_key,source_hash,origin_device_id,created_at,updated_at)"
+            " VALUES (?,?,NULL,NULL,?,?,?,?,?,?,?,?,?,?)",
+            (act, item, "test", "Tested upload recovery", now, "medium", "stage_a", act, "h", "dev1", now, now))
+        c.move_activity(self.conn, act, client_id=self.cl, reason="fix scope")
+        self.assertEqual(self._work_item_of(act), item)
+
+    def test_undo_restores_the_work_item_less_state(self):
+        act = self._unattributed_activity()
+        g = c.move_activity(self.conn, act, client_id=self.cl, project_id=self.pr, reason="fix scope")
+        c.undo(self.conn, g)
+        self.assertIsNone(self._work_item_of(act))
+
+
 class TestMoveActivityIdempotencyKey(unittest.TestCase):
     """Important #2 (final review): `move_activity` must rewrite a
     `stage_a`-sourced, session-backed activity's `idempotency_key` to match
