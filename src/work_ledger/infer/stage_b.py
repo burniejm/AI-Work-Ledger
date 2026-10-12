@@ -463,13 +463,24 @@ def _first_balanced_object(text: str) -> str:
 
 
 def _require_str(value, field, cap):
+    """A required narrative field: wrong type or empty is a real schema
+    violation (the model gave structurally bad output -- reject the whole
+    batch, same as a bad `kind`/`confidence`/evidence id). Running over
+    `cap` is not: `summary`/`outcome`/`title`/`detail`/`statement`/
+    `rationale` are free text with no structural meaning past their length,
+    so truncating one is the same safe, silent cap `query.week` and
+    `query.timesheet` already apply to a ticket's summary text -- not a
+    reason to discard every other activity, remaining item, blocker, and
+    decision in an otherwise-valid batch just because one caption ran a
+    few characters long.
+    """
     if not isinstance(value, str):
         raise StageBSchemaError(f"{field} must be a string, got {type(value).__name__}")
     text = value.strip()
     if not text:
         raise StageBSchemaError(f"{field} must not be empty")
     if len(text) > cap:
-        raise StageBSchemaError(f"{field} exceeds {cap} characters ({len(text)})")
+        text = text[:cap].rstrip()
     return text
 
 
@@ -892,15 +903,26 @@ def _attribution(conn, activity, stage_a_rows):
 
 def _bounds(bundle_by_id, evidence_ids, session_row):
     """`(started_at, ended_at)` from the cited events, falling back to the
-    session's own window when the model cited nothing."""
+    session's start and no end when the model cited nothing -- matching
+    Stage A's own contract (`infer.stage_a`'s `ended_at` is `None` absent
+    real evidence) and the floor `query.timespent` already applies to any
+    activity with no end evidence, rather than inventing one here.
+
+    This used to fall back to `session_row["ended_at"] or
+    session_row["last_seen_at"]`: correct for a short-lived session, but
+    `last_seen_at` keeps advancing for as long as a session stays open or
+    gets reopened, with no bound tying it to when *this* bundle's events
+    actually happened. A session idle-finalized weeks after it started
+    turned one activity's "ended_at" into that whole multi-week span,
+    inflating its reported time-on-ticket by orders of magnitude the next
+    time a report's window happened to clip into it.
+    """
     times = sorted(bundle_by_id[i]["occurred_at"] for i in evidence_ids
                    if i in bundle_by_id and bundle_by_id[i].get("occurred_at"))
     if times:
         return times[0], times[-1]
     started = session_row["started_at"] if session_row is not None else None
-    ended = (session_row["ended_at"] or session_row["last_seen_at"]) \
-        if session_row is not None else None
-    return started or timeutil.utc_now_iso(), ended
+    return started or timeutil.utc_now_iso(), None
 
 
 # `source_events.event_type` -> the `activity_evidence.evidence_type` the

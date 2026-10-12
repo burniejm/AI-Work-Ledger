@@ -72,6 +72,19 @@ class TestStageB(_StageBCase):
         # never high on Stage B alone (Global Constraints / DESIGN 6 override 2)
         self.assertIn(row["confidence"], ("medium", "low"))
 
+    def test_no_cited_evidence_does_not_inherit_a_stale_last_seen_at(self):
+        # Regression: a session reopened weeks after it started used to leak
+        # its (far-advanced) last_seen_at into an uncited activity's
+        # ended_at, inflating that activity's reported duration by orders
+        # of magnitude whenever a later report's window clipped into it.
+        os.environ["STUB_CLAUDE_MODE"] = "ok"  # cites no evidence (evidence_event_ids: [])
+        S.touch(self.conn, "s1", occurred_at="2026-09-29T12:00:00.000Z")  # 30 days later
+        stage_b.run(self.conn, "s1", force=True)
+        row = self.conn.execute(
+            "SELECT started_at, ended_at FROM activities WHERE source='stage_b'").fetchone()
+        self.assertEqual(row["started_at"], "2026-08-30T12:00:00.000Z")
+        self.assertIsNone(row["ended_at"])
+
     def test_rerun_with_the_same_bundle_is_idempotent(self):
         os.environ["STUB_CLAUDE_MODE"] = "ok"
         stage_b.run(self.conn, "s1", force=True)
@@ -278,9 +291,19 @@ class TestStageB(_StageBCase):
         with self.assertRaises(stage_b.StageBSchemaError):
             stage_b.validate_output(text, known_event_ids={"real-id"})
 
-    def test_validate_output_rejects_an_over_long_summary(self):
+    def test_validate_output_truncates_an_over_long_summary_instead_of_rejecting(self):
+        # A caption running over its cap is not a structural violation --
+        # rejecting the whole batch over it would discard every other
+        # activity, remaining item, and decision the model got right.
         text = json.dumps({"schema_version": 1, "activities": [
             {"kind": "code", "summary": "x" * 401, "confidence": "low",
+             "evidence_event_ids": []}]})
+        parsed = stage_b.validate_output(text)
+        self.assertEqual(len(parsed["activities"][0]["summary"]), 400)
+
+    def test_validate_output_still_rejects_a_structural_violation(self):
+        text = json.dumps({"schema_version": 1, "activities": [
+            {"kind": "not-a-real-kind", "summary": "s", "confidence": "low",
              "evidence_event_ids": []}]})
         with self.assertRaises(stage_b.StageBSchemaError):
             stage_b.validate_output(text)
